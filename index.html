@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kelemvor's Scales - Web</title>
+  <link rel="icon" type="image/x-icon" href="assets/icon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <div class="bg-grid"></div>
+
+  <div class="app-shell">
+    <header class="hero">
+      <div class="brand">
+        <img src="assets/icon.ico" alt="Kelemvor icon" class="brand-icon">
+        <div>
+          <h1>Kelemvor's Scales</h1>
+          <p>Encounter Monte Carlo + Auto-Tune, now browser-native for GitHub Pages.</p>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <button id="btnSaveLocal" class="btn">Save Local</button>
+        <button id="btnExportJson" class="btn">Export JSON</button>
+        <label class="btn btn-file">
+          Import JSON
+          <input id="inputImportJson" type="file" accept=".json,application/json">
+        </label>
+      </div>
+    </header>
+
+    <nav class="tabbar" aria-label="Application Sections">
+      <button class="tab active" data-tab="party">Party & DPR</button>
+      <button class="tab" data-tab="boss">Boss Kit</button>
+      <button class="tab" data-tab="det">Deterministic DPR</button>
+      <button class="tab" data-tab="ttd">Boss TTD</button>
+      <button class="tab" data-tab="mc">Boss->PC MC</button>
+      <button class="tab" data-tab="enc">Encounter MC</button>
+      <button class="tab" data-tab="report">Report</button>
+    </nav>
+
+    <main>
+      <section id="panel-party" class="panel active">
+        <div class="card">
+          <div class="card-head">
+            <h2>Party Composition</h2>
+            <button id="btnAddPartyRow" class="btn btn-accent">Add PC</button>
+          </div>
+          <div id="partyTable" class="table-mount"></div>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h2>DPR Input (Single Entry)</h2>
+            <p class="hint">Edit DPR here once. Nova DPR and Effective DPR capture it automatically.</p>
+            <div id="dprTable" class="table-mount"></div>
+          </div>
+          <div class="card">
+            <h2>Nova Conversion Settings</h2>
+            <p class="hint">Only conversion knobs are editable here. Nova DPR and Target AC are derived.</p>
+            <div id="novaTable" class="table-mount"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-boss" class="panel">
+        <div class="card">
+          <div class="card-head">
+            <h2>Boss Attacks</h2>
+            <button id="btnAddAttackRow" class="btn btn-accent">Add Attack</button>
+          </div>
+          <div id="attacksTable" class="table-mount"></div>
+        </div>
+        <div class="card">
+          <h2>Shared Combat Controls</h2>
+          <div class="form-grid">
+            <label>Boss Roll Mode
+              <select id="optModeSelect">
+                <option value="normal">normal</option>
+                <option value="adv">adv</option>
+                <option value="dis">dis</option>
+              </select>
+            </label>
+            <label>Spread Attacks Across
+              <input id="optSpreadTargets" type="number" min="1" max="20" step="1">
+            </label>
+            <label>Per-Target THP per Round
+              <input id="optThpExpr" type="text">
+            </label>
+            <label>Boss HP
+              <input id="optBossHp" type="number" min="1" max="99999" step="1">
+            </label>
+            <label>Boss AC
+              <input id="optBossAc" type="number" min="1" max="40" step="1">
+            </label>
+            <label>Resistance Factor
+              <input id="optResistFactor" type="number" min="0.01" max="9" step="0.01">
+            </label>
+            <label>Regen per Round
+              <input id="optBossRegen" type="number" min="0" max="9999" step="0.1">
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Lair and Recharge</h2>
+          <div class="form-grid">
+            <label class="checkbox"><input id="optLairEnabled" type="checkbox"> Lair Action Enabled</label>
+            <label>Lair Avg Damage
+              <input id="optLairAvg" type="number" min="0" max="9999" step="0.1">
+            </label>
+            <label>Lair Targets
+              <input id="optLairTargets" type="number" min="1" max="99" step="1">
+            </label>
+            <label>Lair Every N Rounds
+              <input id="optLairEveryN" type="number" min="1" max="99" step="1">
+            </label>
+            <label class="checkbox"><input id="optRechEnabled" type="checkbox"> Recharge Power Enabled</label>
+            <label>Recharge Text
+              <input id="optRechargeText" type="text" placeholder="5-6">
+            </label>
+            <label>Recharge Avg Damage
+              <input id="optRechAvg" type="number" min="0" max="9999" step="0.1">
+            </label>
+            <label>Recharge Targets
+              <input id="optRechTargets" type="number" min="1" max="99" step="1">
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <h2>On-Hit Rider</h2>
+          <div class="form-grid">
+            <label>Rider Mode
+              <select id="optRiderMode">
+                <option value="none">none</option>
+                <option value="grant advantage on melee next round">grant advantage on melee next round</option>
+                <option value="-2 AC next round">-2 AC next round</option>
+              </select>
+            </label>
+            <label>Rider Duration
+              <input id="optRiderDuration" type="number" min="1" max="10" step="1">
+            </label>
+            <label class="checkbox"><input id="optRiderMeleeOnly" type="checkbox"> Melee Only</label>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-det" class="panel">
+        <div class="card card-action">
+          <h2>Deterministic DPR Snapshot</h2>
+          <button id="btnComputeDet" class="btn btn-accent">Compute Deterministic DPR</button>
+        </div>
+        <div class="card">
+          <div id="detTable" class="table-mount"></div>
+        </div>
+        <div class="card">
+          <canvas id="detChart" height="120"></canvas>
+        </div>
+      </section>
+
+      <section id="panel-ttd" class="panel">
+        <div class="card">
+          <h2>Boss Time to Die</h2>
+          <div class="radio-row">
+            <label><input id="ttdModeManual" type="radio" name="ttdMode" value="manual" checked> Use Manual Effective DPR</label>
+            <label><input id="ttdModeNova" type="radio" name="ttdMode" value="nova"> Convert From Nova DPR</label>
+            <button id="btnComputeTtd" class="btn btn-accent">Refresh</button>
+          </div>
+          <div class="stats-grid">
+            <div id="lblIncoming" class="stat"></div>
+            <div id="lblRoundsExact" class="stat"></div>
+            <div id="lblRoundsCeil" class="stat"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div id="effTable" class="table-mount"></div>
+        </div>
+      </section>
+
+      <section id="panel-mc" class="panel">
+        <div class="card">
+          <h2>Boss -> Single PC Monte Carlo</h2>
+          <div class="form-grid">
+            <label>Target PC
+              <select id="mcTarget"></select>
+            </label>
+            <label>Rounds
+              <input id="mcRounds" type="number" min="1" max="50" step="1">
+            </label>
+            <label>Trials
+              <input id="mcTrials" type="number" min="1000" max="200000" step="1000">
+            </label>
+            <label class="checkbox"><input id="mcShowHist" type="checkbox"> Show Histogram</label>
+          </div>
+          <button id="btnRunMc" class="btn btn-accent">Run MC</button>
+          <div class="stats-grid">
+            <div id="lblMcMean" class="stat"></div>
+            <div id="lblMcP95" class="stat"></div>
+            <div id="lblMcP99" class="stat"></div>
+          </div>
+        </div>
+        <div class="card">
+          <canvas id="mcChart" height="120"></canvas>
+        </div>
+      </section>
+
+      <section id="panel-enc" class="panel">
+        <div class="card">
+          <h2>Encounter Simulation Controls</h2>
+          <div class="form-grid">
+            <label>Trials
+              <input id="encTrials" type="number" min="1000" max="300000" step="1000">
+            </label>
+            <label>Max Rounds
+              <input id="encMaxRounds" type="number" min="1" max="50" step="1">
+            </label>
+            <label>Party DPR CV
+              <input id="encDprCv" type="number" min="0.05" max="2" step="0.01">
+            </label>
+            <label>Initiative
+              <select id="encInitiative">
+                <option value="random">random</option>
+                <option value="party_first">party_first</option>
+                <option value="boss_first">boss_first</option>
+              </select>
+            </label>
+            <label class="checkbox"><input id="encUseNova" type="checkbox"> Use Nova -> Effective DPR</label>
+          </div>
+          <h3>Auto-Tune</h3>
+          <div class="form-grid">
+            <label>Target Median TTK
+              <input id="tuneMedian" type="number" min="1" max="20" step="0.1">
+            </label>
+            <label>TPK Cap
+              <input id="tuneTpkCap" type="number" min="0" max="1" step="0.001">
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="btnRunEncounter" class="btn btn-accent">Run Encounter Simulation</button>
+            <button id="btnAutoTune" class="btn">Auto-Tune HP</button>
+          </div>
+          <div class="stats-grid">
+            <div id="lblTtkMedian" class="stat"></div>
+            <div id="lblTtkP1090" class="stat"></div>
+            <div id="lblTpk" class="stat"></div>
+            <div id="lblDowns" class="stat"></div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="card"><canvas id="survChart" height="120"></canvas></div>
+          <div class="card"><canvas id="ttkChart" height="120"></canvas></div>
+        </div>
+      </section>
+
+      <section id="panel-report" class="panel">
+        <div class="card">
+          <h2>State Report</h2>
+          <textarea id="reportText" readonly></textarea>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar" id="statusBar">Ready.</footer>
+  </div>
+</body>
+</html>
