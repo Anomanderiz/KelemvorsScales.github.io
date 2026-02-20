@@ -2,6 +2,7 @@
   "use strict";
 
   const SAVE_KEYS = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
+  const NOVA_METHODS = ["attack", "save_half", "auto_hit"];
   const STORAGE_KEY = "kelemvor_scales_web_state_v1";
 
   const DEFAULT_STATE = {
@@ -17,7 +18,19 @@
       { Name: "Fire Breath", Type: "save", "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6", "Uses/round": 1, "Melee?": false, "Enabled?": true },
     ],
     party_dpr_table: [{ Member: "Fighter", DPR: 15.0 }],
-    party_nova_table: [{ Member: "Fighter", "Nova DPR": 25.0, "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 17, "Crit Ratio": 1.5, Uptime: 0.9 }],
+    party_nova_table: [{
+      Member: "Fighter",
+      "Nova DPR": 25.0,
+      Method: "attack",
+      "Atk Bonus": 8,
+      "Roll Mode": "normal",
+      "Target AC": 17,
+      "Crit Ratio": 1.5,
+      "Save DC": 16,
+      "Target Save Bonus": 0,
+      "Save Success Mult": 0.5,
+      Uptime: 0.9,
+    }],
 
     mode_select: "normal",
     spread_targets: 1,
@@ -48,7 +61,7 @@
 
     enc_trials: 10000,
     enc_max_rounds: 12,
-    enc_use_nova: false,
+    enc_use_nova: true,
     dpr_cv: 0.6,
     initiative_mode: "random",
 
@@ -76,16 +89,26 @@
   const NOVA_COLUMNS = [
     { key: "Member", label: "Member", type: "text", readOnly: true },
     { key: "Nova DPR", label: "Nova DPR", type: "number", readOnly: true },
+    {
+      key: "Method",
+      label: "Method",
+      type: "select",
+      options: NOVA_METHODS,
+      parser: (v) => normalizeNovaMethod(v),
+    },
     { key: "Atk Bonus", label: "Atk Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 7) },
     {
       key: "Roll Mode",
       label: "Roll Mode",
       type: "select",
       options: ["normal", "adv", "dis"],
-      parser: (v) => (["normal", "adv", "dis"].includes(String(v)) ? String(v) : "normal"),
+      parser: (v) => normalizeRollMode(v),
     },
     { key: "Target AC", label: "Target AC", type: "number", readOnly: true },
     { key: "Crit Ratio", label: "Crit Ratio", type: "number", step: "0.01", parser: (v) => Math.max(0, safeFloat(v, 1.5)) },
+    { key: "Save DC", label: "Save DC", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 16)) },
+    { key: "Target Save Bonus", label: "Save Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Save Success Mult", label: "Save Success Mult", type: "number", step: "0.01", min: "0", max: "1", parser: (v) => clamp(safeFloat(v, 0.5), 0, 1) },
     { key: "Uptime", label: "Uptime", type: "number", step: "0.01", min: "0", max: "1", parser: (v) => clamp(safeFloat(v, 0.85), 0, 1) },
   ];
 
@@ -1287,24 +1310,16 @@
     const rows = [];
 
     for (const row of state.party_nova_table) {
-      const novaDpr = Math.max(0, safeFloat(row["Nova DPR"], 0));
-      const atkBonus = safeInt(row["Atk Bonus"], 0);
-      const targetAc = Math.max(1, safeInt(row["Target AC"], state.boss_ac));
-      const mode = String(row["Roll Mode"] || "normal");
-      const critRatio = Math.max(0, safeFloat(row["Crit Ratio"], 1.5));
-      const uptime = clamp(safeFloat(row.Uptime, 0.85), 0, 1);
-
-      const [pNon, pCrit, pAny] = hitProbs(targetAc, atkBonus, mode);
-      const factor = (pNon + critRatio * pCrit) * uptime;
-      const effDpr = novaDpr * factor;
-      total += effDpr;
+      const conv = computeNovaConversion(row, state.boss_ac);
+      total += conv.effDpr;
 
       rows.push({
         Member: row.Member || "?",
-        "P(any hit)%": (100 * pAny).toFixed(1),
-        "P(crit)%": (100 * pCrit).toFixed(1),
-        Factor: factor.toFixed(3),
-        "Eff DPR": effDpr.toFixed(2),
+        Method: conv.method,
+        "P(main)%": (100 * conv.pMain).toFixed(1),
+        "P(crit)%": (100 * conv.pCrit).toFixed(1),
+        Factor: conv.factor.toFixed(3),
+        "Eff DPR": conv.effDpr.toFixed(2),
       });
     }
 
@@ -1318,18 +1333,48 @@
 
     const out = [];
     for (const row of state.party_nova_table) {
-      const novaDpr = safeFloat(row["Nova DPR"], 0);
-      const atkBonus = safeInt(row["Atk Bonus"], 0);
-      const targetAc = safeInt(row["Target AC"], state.boss_ac);
-      const mode = String(row["Roll Mode"] || "normal");
-      const critRatio = safeFloat(row["Crit Ratio"], 1.5);
-      const uptime = clamp(safeFloat(row.Uptime, 0.85), 0, 1);
-
-      const [pNon, pCrit] = hitProbs(targetAc, atkBonus, mode);
-      const factor = (pNon + critRatio * pCrit) * uptime;
-      out.push([row.Member || "?", novaDpr * factor]);
+      const conv = computeNovaConversion(row, state.boss_ac);
+      out.push([row.Member || "?", conv.effDpr]);
     }
     return out;
+  }
+
+  function computeNovaConversion(row, fallbackBossAc) {
+    const method = normalizeNovaMethod(row.Method);
+    const mode = normalizeRollMode(row["Roll Mode"]);
+    const novaDpr = Math.max(0, safeFloat(row["Nova DPR"], 0));
+    const uptime = clamp(safeFloat(row.Uptime, 0.85), 0, 1);
+
+    let pMain = 1;
+    let pCrit = 0;
+    let baseFactor = 1;
+
+    if (method === "attack") {
+      const atkBonus = safeInt(row["Atk Bonus"], 0);
+      const targetAc = Math.max(1, safeInt(row["Target AC"], fallbackBossAc));
+      const critRatio = Math.max(0, safeFloat(row["Crit Ratio"], 1.5));
+      const [pNon, crit, pAny] = hitProbs(targetAc, atkBonus, mode);
+      pMain = pAny;
+      pCrit = crit;
+      baseFactor = pNon + critRatio * pCrit;
+    } else if (method === "save_half") {
+      const saveDc = Math.max(1, safeInt(row["Save DC"], 16));
+      const targetSaveBonus = safeInt(row["Target Save Bonus"], 0);
+      const onSaveMult = clamp(safeFloat(row["Save Success Mult"], 0.5), 0, 1);
+      const pFail = pSaveFailWithMode(saveDc, targetSaveBonus, mode);
+      pMain = pFail;
+      pCrit = 0;
+      baseFactor = pFail + onSaveMult * (1 - pFail);
+    }
+
+    const factor = baseFactor * uptime;
+    return {
+      method,
+      pMain,
+      pCrit,
+      factor,
+      effDpr: novaDpr * factor,
+    };
   }
 
   function perRoundDprVsPc(pcRow, mode, attacks) {
@@ -1437,6 +1482,33 @@
     if (target <= 1) return 1 / 20;
     if (target > 20) return 19 / 20;
     return (target - 1) / 20;
+  }
+
+  function pSaveFailWithMode(dc, saveBonus, mode = "normal") {
+    const normalized = normalizeRollMode(mode);
+    if (normalized === "normal") {
+      return pSaveFail(dc, saveBonus);
+    }
+
+    let fails = 0;
+    for (let r1 = 1; r1 <= 20; r1 += 1) {
+      for (let r2 = 1; r2 <= 20; r2 += 1) {
+        const roll = normalized === "adv" ? Math.max(r1, r2) : Math.min(r1, r2);
+        const success = roll === 20 || (roll !== 1 && roll + saveBonus >= dc);
+        if (!success) fails += 1;
+      }
+    }
+    return fails / 400;
+  }
+
+  function normalizeRollMode(value) {
+    const mode = String(value || "normal");
+    return ["normal", "adv", "dis"].includes(mode) ? mode : "normal";
+  }
+
+  function normalizeNovaMethod(value) {
+    const method = String(value || "attack");
+    return NOVA_METHODS.includes(method) ? method : "attack";
   }
 
   function parseRecharge(text) {
@@ -1805,10 +1877,14 @@
       return {
         Member: name,
         "Nova DPR": Math.max(0, safeFloat(dpr ? dpr.DPR : 10.0, 10.0)),
+        Method: normalizeNovaMethod(nRow.Method),
         "Atk Bonus": safeInt(nRow["Atk Bonus"], 7),
-        "Roll Mode": ["normal", "adv", "dis"].includes(String(nRow["Roll Mode"])) ? String(nRow["Roll Mode"]) : "normal",
+        "Roll Mode": normalizeRollMode(nRow["Roll Mode"]),
         "Target AC": bossAc,
         "Crit Ratio": Math.max(0, safeFloat(nRow["Crit Ratio"], 1.5)),
+        "Save DC": Math.max(1, safeInt(nRow["Save DC"], 16)),
+        "Target Save Bonus": safeInt(nRow["Target Save Bonus"], 0),
+        "Save Success Mult": clamp(safeFloat(nRow["Save Success Mult"], 0.5), 0, 1),
         Uptime: clamp(safeFloat(nRow.Uptime, 0.85), 0, 1),
       };
     });
@@ -1848,10 +1924,14 @@
     return {
       Member: String(row.Member || "").trim(),
       "Nova DPR": Math.max(0, safeFloat(row["Nova DPR"], 0)),
+      Method: normalizeNovaMethod(row.Method),
       "Atk Bonus": safeInt(row["Atk Bonus"], 7),
-      "Roll Mode": ["normal", "adv", "dis"].includes(String(row["Roll Mode"])) ? String(row["Roll Mode"]) : "normal",
+      "Roll Mode": normalizeRollMode(row["Roll Mode"]),
       "Target AC": Math.max(1, safeInt(row["Target AC"], 16)),
       "Crit Ratio": Math.max(0, safeFloat(row["Crit Ratio"], 1.5)),
+      "Save DC": Math.max(1, safeInt(row["Save DC"], 16)),
+      "Target Save Bonus": safeInt(row["Target Save Bonus"], 0),
+      "Save Success Mult": clamp(safeFloat(row["Save Success Mult"], 0.5), 0, 1),
       Uptime: clamp(safeFloat(row.Uptime, 0.85), 0, 1),
     };
   }
