@@ -132,6 +132,8 @@
     ttk: null,
   };
   let statusTimer = null;
+  let chartResizeObserver = null;
+  let chartResizeRaf = 0;
 
   const els = {};
 
@@ -143,8 +145,41 @@
     bindGlobalActions();
     bindButtons();
     bindOptionControls();
+    initResizableWidgets();
     renderAll();
     setStatus("Ready.", 1800);
+  }
+
+  function initResizableWidgets() {
+    if (typeof window.ResizeObserver !== "function") {
+      return;
+    }
+
+    if (chartResizeObserver) {
+      chartResizeObserver.disconnect();
+    }
+
+    const chartWraps = Array.from(document.querySelectorAll(".chart-wrap"));
+    if (!chartWraps.length) {
+      return;
+    }
+
+    chartResizeObserver = new window.ResizeObserver(() => {
+      if (chartResizeRaf) {
+        return;
+      }
+
+      chartResizeRaf = window.requestAnimationFrame(() => {
+        chartResizeRaf = 0;
+        for (const chart of Object.values(charts)) {
+          if (chart) {
+            chart.resize();
+          }
+        }
+      });
+    });
+
+    chartWraps.forEach((wrap) => chartResizeObserver.observe(wrap));
   }
 
   function cacheElements() {

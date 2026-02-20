@@ -10,6 +10,8 @@
   --accent-2: #2bc4b0;
   --danger: #ff5b6e;
   --shadow: 0 14px 36px rgba(1, 9, 16, 0.45);
+  --widget-min-w: 260px;
+  --widget-min-h: 120px;
 }
 
 * {
@@ -175,6 +177,26 @@ main {
   background: linear-gradient(160deg, rgba(16, 42, 59, 0.95), rgba(13, 36, 52, 0.92));
   box-shadow: var(--shadow);
   padding: 14px;
+  overflow: auto;
+  resize: both;
+  min-width: var(--widget-min-w);
+  min-height: var(--widget-min-h);
+}
+
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: clamp(260px, 40vh, 420px);
+  min-height: 260px;
+  min-width: var(--widget-min-w);
+  overflow: auto;
+  resize: both;
+}
+
+.chart-wrap canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .card h2,
@@ -202,6 +224,10 @@ main {
   gap: 14px;
 }
 
+.split-charts {
+  grid-template-columns: repeat(2, minmax(360px, 1fr));
+}
+
 .hint {
   margin: 0 0 10px;
   color: var(--text-soft);
@@ -209,9 +235,12 @@ main {
 }
 
 .table-wrap {
-  overflow-x: auto;
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
+  resize: both;
+  min-width: var(--widget-min-w);
+  min-height: 100px;
 }
 
 table {
@@ -265,7 +294,7 @@ select[disabled] {
 
 textarea {
   min-height: 420px;
-  resize: vertical;
+  resize: both;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.88rem;
 }
@@ -360,6 +389,9 @@ textarea {
   padding: 10px;
   background: rgba(7, 20, 31, 0.46);
   min-height: 44px;
+  min-width: 180px;
+  overflow: auto;
+  resize: both;
 }
 
 .statusbar {
@@ -384,6 +416,10 @@ textarea {
 
 @media (max-width: 1120px) {
   .split {
+    grid-template-columns: 1fr;
+  }
+
+  .split-charts {
     grid-template-columns: 1fr;
   }
 
