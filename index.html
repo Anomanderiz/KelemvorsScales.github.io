@@ -58,12 +58,12 @@
         <div class="split">
           <div class="card">
             <h2>DPR Input (Single Entry)</h2>
-            <p class="hint">Edit DPR here once. Nova DPR and Effective DPR capture it automatically.</p>
+            <p class="hint">Enter per-PC DPR once (all-hits baseline). Conversion settings use this to estimate effective DPR.</p>
             <div id="dprTable" class="table-mount"></div>
           </div>
           <div class="card">
             <h2>Nova Conversion Settings</h2>
-            <p class="hint">Only conversion knobs are editable here. Nova DPR and Target AC are derived.</p>
+            <p class="hint">Configure each PC as attack-roll, save-based, or auto-hit delivery. Nova DPR and Target AC stay derived.</p>
             <div id="novaTable" class="table-mount"></div>
           </div>
         </div>
@@ -159,7 +159,9 @@
           <div id="detTable" class="table-mount"></div>
         </div>
         <div class="card">
-          <canvas id="detChart" height="120"></canvas>
+          <div class="chart-wrap">
+            <canvas id="detChart"></canvas>
+          </div>
         </div>
       </section>
 
@@ -167,8 +169,8 @@
         <div class="card">
           <h2>Boss Time to Die</h2>
           <div class="radio-row">
-            <label><input id="ttdModeManual" type="radio" name="ttdMode" value="manual" checked> Use Manual Effective DPR</label>
-            <label><input id="ttdModeNova" type="radio" name="ttdMode" value="nova"> Convert From Nova DPR</label>
+            <label><input id="ttdModeManual" type="radio" name="ttdMode" value="manual"> Use DPR As Entered (already effective)</label>
+            <label><input id="ttdModeNova" type="radio" name="ttdMode" value="nova" checked> Convert DPR Baseline To Effective</label>
             <button id="btnComputeTtd" class="btn btn-accent">Refresh</button>
           </div>
           <div class="stats-grid">
@@ -205,7 +207,9 @@
           </div>
         </div>
         <div class="card">
-          <canvas id="mcChart" height="120"></canvas>
+          <div class="chart-wrap">
+            <canvas id="mcChart"></canvas>
+          </div>
         </div>
       </section>
 
@@ -229,7 +233,7 @@
                 <option value="boss_first">boss_first</option>
               </select>
             </label>
-            <label class="checkbox"><input id="encUseNova" type="checkbox"> Use Nova -> Effective DPR</label>
+            <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR Baseline -> Effective</label>
           </div>
           <h3>Auto-Tune</h3>
           <div class="form-grid">
@@ -251,9 +255,17 @@
             <div id="lblDowns" class="stat"></div>
           </div>
         </div>
-        <div class="split">
-          <div class="card"><canvas id="survChart" height="120"></canvas></div>
-          <div class="card"><canvas id="ttkChart" height="120"></canvas></div>
+        <div class="split split-charts">
+          <div class="card">
+            <div class="chart-wrap">
+              <canvas id="survChart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <div class="chart-wrap">
+              <canvas id="ttkChart"></canvas>
+            </div>
+          </div>
         </div>
       </section>
 
