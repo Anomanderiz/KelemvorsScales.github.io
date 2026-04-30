@@ -36,12 +36,14 @@
 
     lair_enabled: false,
     lair_avg: 6.0,
+    lair_formula: "1d10+1",
     lair_targets: 2,
     lair_every_n: 2,
 
     rech_enabled: false,
     recharge_text: "5-6",
     rech_avg: 22.0,
+    rech_formula: "4d10",
     rech_targets: 1,
 
     rider_mode: "none",
@@ -121,6 +123,7 @@
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
     { key: "Uses/round", label: "Uses/round", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 1)) },
+    { key: "Uses/encounter", label: "Uses/enc", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 0)) },
     { key: "Melee?", label: "Melee?", type: "checkbox", parser: (v) => Boolean(v) },
     { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
   ];
@@ -187,10 +190,10 @@
     const ids = [
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
-      "btnAddAttackRow", "attacksTable",
+      "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable",
       "optModeSelect", "optSpreadTargets", "optThpExpr", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
-      "optLairEnabled", "optLairAvg", "optLairTargets", "optLairEveryN",
-      "optRechEnabled", "optRechargeText", "optRechAvg", "optRechTargets",
+      "optLairEnabled", "optLairAvg", "optLairFormula", "optLairTargets", "optLairEveryN",
+      "optRechEnabled", "optRechargeText", "optRechAvg", "optRechFormula", "optRechTargets",
       "optRiderMode", "optRiderDuration", "optRiderMeleeOnly",
       "btnComputeDet", "detTable", "detChart",
       "ttdModeManual", "ttdModeNova", "btnComputeTtd", "effTable",
@@ -202,7 +205,7 @@
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
       "reportText",
-      "pacingRounds", "btnComputePacing", "btnApplyPacingHp", "btnApplyPacingDpr",
+      "pacingRounds", "btnComputePacing", "btnApplyPacingHp", "btnApplyPacingDpr", "btnApplyBossKitMult",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
     ];
@@ -286,6 +289,7 @@
         Save: "DEX",
         Damage: "1d6+3",
         "Uses/round": 1,
+        "Uses/encounter": 0,
         "Melee?": true,
         "Enabled?": true,
       });
@@ -293,6 +297,25 @@
       renderAttackSection();
       refreshReport();
       setStatus("Added attack row.", 1500);
+    });
+
+    els.btnAddLimitedAttackRow.addEventListener("click", () => {
+      state.attacks_table.push({
+        Name: "Limited Ability",
+        Type: "save",
+        "Attack bonus": 0,
+        DC: 15,
+        Save: "DEX",
+        Damage: "4d8",
+        "Uses/round": 1,
+        "Uses/encounter": 1,
+        "Melee?": false,
+        "Enabled?": true,
+      });
+      persistState();
+      renderAttackSection();
+      refreshReport();
+      setStatus("Added limited ability row.", 1500);
     });
 
     els.btnComputeDet.addEventListener("click", () => {
@@ -335,6 +358,11 @@
         applyPacingDpr();
       });
     }
+    if (els.btnApplyBossKitMult) {
+      els.btnApplyBossKitMult.addEventListener("click", () => {
+        applyBossKitMultiplier();
+      });
+    }
   }
 
   function bindOptionControls() {
@@ -349,13 +377,39 @@
     bindControl("optBossDprMult", "boss_dpr_mult", (el) => clamp(safeFloat(el.value, 1.0), 0, 20));
 
     bindControl("optLairEnabled", "lair_enabled", (el) => Boolean(el.checked));
-    bindControl("optLairAvg", "lair_avg", (el) => Math.max(0, safeFloat(el.value, 0.0)));
+    bindControl("optLairAvg", "lair_avg", (el) => {
+      const avg = Math.max(0, safeFloat(el.value, 0.0));
+      state.lair_formula = damageFormulaForAverage(avg, 6);
+      setControlValue(els.optLairFormula, state.lair_formula);
+      return avg;
+    });
+    bindControl("optLairFormula", "lair_formula", (el) => {
+      const formula = String(el.value || "").trim();
+      if (formula) {
+        state.lair_avg = round2(averageDamage(formula));
+        setControlValue(els.optLairAvg, state.lair_avg);
+      }
+      return formula;
+    });
     bindControl("optLairTargets", "lair_targets", (el) => Math.max(1, safeInt(el.value, 1)));
     bindControl("optLairEveryN", "lair_every_n", (el) => Math.max(1, safeInt(el.value, 1)));
 
     bindControl("optRechEnabled", "rech_enabled", (el) => Boolean(el.checked));
     bindControl("optRechargeText", "recharge_text", (el) => String(el.value || "5-6").trim() || "5-6");
-    bindControl("optRechAvg", "rech_avg", (el) => Math.max(0, safeFloat(el.value, 0.0)));
+    bindControl("optRechAvg", "rech_avg", (el) => {
+      const avg = Math.max(0, safeFloat(el.value, 0.0));
+      state.rech_formula = damageFormulaForAverage(avg, 6);
+      setControlValue(els.optRechFormula, state.rech_formula);
+      return avg;
+    });
+    bindControl("optRechFormula", "rech_formula", (el) => {
+      const formula = String(el.value || "").trim();
+      if (formula) {
+        state.rech_avg = round2(averageDamage(formula));
+        setControlValue(els.optRechAvg, state.rech_avg);
+      }
+      return formula;
+    });
     bindControl("optRechTargets", "rech_targets", (el) => Math.max(1, safeInt(el.value, 1)));
 
     bindControl("optRiderMode", "rider_mode", (el) => String(el.value || "none"));
@@ -455,12 +509,14 @@
 
     setControlChecked(els.optLairEnabled, state.lair_enabled);
     setControlValue(els.optLairAvg, state.lair_avg);
+    setControlValue(els.optLairFormula, state.lair_formula);
     setControlValue(els.optLairTargets, state.lair_targets);
     setControlValue(els.optLairEveryN, state.lair_every_n);
 
     setControlChecked(els.optRechEnabled, state.rech_enabled);
     setControlValue(els.optRechargeText, state.recharge_text);
     setControlValue(els.optRechAvg, state.rech_avg);
+    setControlValue(els.optRechFormula, state.rech_formula);
     setControlValue(els.optRechTargets, state.rech_targets);
 
     setControlValue(els.optRiderMode, state.rider_mode);
@@ -748,7 +804,7 @@
     const chartValues = [];
 
     for (const pc of party) {
-      const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks);
+      const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, state.pacing_rounds || state.enc_max_rounds || 1);
       const total = (baseDpr * dprMult) / spread + additiveDpr;
       const net = Math.max(0, total - thpAvg);
       const hp = Math.max(1, safeInt(pc.HP, 1));
@@ -859,12 +915,7 @@
       syncControlsFromState();
       persistState();
     }
-    if (els.btnApplyPacingHp) {
-      els.btnApplyPacingHp.disabled = pacing.recommendedBossHp <= 0;
-    }
-    if (els.btnApplyPacingDpr) {
-      els.btnApplyPacingDpr.disabled = !(Number.isFinite(pacing.targetBossDprMult) && pacing.targetBossDprMult >= 0);
-    }
+    updatePacingActionButtons(pacing);
     const metrics = runEncounterMc();
     if (metrics.error) {
       alert(metrics.error);
@@ -1074,6 +1125,7 @@
 
     const totalDamage = new Array(trials).fill(0);
     const riderRemaining = new Array(trials).fill(0);
+    const attackUsesRemaining = Array.from({ length: trials }, () => attacks.map((atk) => attackUseCapacity(atk)));
 
     for (let rnd = 1; rnd <= rounds; rnd += 1) {
       for (let i = 0; i < trials; i += 1) {
@@ -1090,10 +1142,13 @@
           currentMode = "adv";
         }
 
-        for (const atk of attacks) {
+        for (let a = 0; a < attacks.length; a += 1) {
+          const atk = attacks[a];
           if (atk.uses_per_round <= 0) continue;
 
-          for (let use = 0; use < atk.uses_per_round; use += 1) {
+          const availableUses = Math.min(atk.uses_per_round, attackUsesRemaining[i][a]);
+          for (let use = 0; use < availableUses; use += 1) {
+            attackUsesRemaining[i][a] -= 1;
             if (Math.random() >= 1 / spreadTargets) continue;
 
             if (atk.kind === "save") {
@@ -1193,6 +1248,7 @@
     const saveIndex = { STR: 0, DEX: 1, CON: 2, INT: 3, WIS: 4, CHA: 5 };
 
     const riderRem = Array.from({ length: trials }, () => new Array(P).fill(0));
+    const attackUsesRemaining = Array.from({ length: trials }, () => attacks.map((atk) => attackUseCapacity(atk)));
 
     const ttk = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const tpkFlags = new Array(trials).fill(false);
@@ -1274,10 +1330,13 @@
         const poolSize = Math.min(spreadTargets, aliveNow.length);
         const roundPool = sampleWithoutReplacement(aliveNow, poolSize);
 
-        for (const atk of attacks) {
+        for (let a = 0; a < attacks.length; a += 1) {
+          const atk = attacks[a];
           if (atk.uses_per_round <= 0) continue;
 
-          for (let use = 0; use < atk.uses_per_round; use += 1) {
+          const availableUses = Math.min(atk.uses_per_round, attackUsesRemaining[t][a]);
+          for (let use = 0; use < availableUses; use += 1) {
+            attackUsesRemaining[t][a] -= 1;
             let alivePool = roundPool.filter((idx) => pcsAlive[t][idx]);
             if (!alivePool.length) {
               alivePool = aliveIndicesForTrial(pcsAlive[t]);
@@ -1454,7 +1513,7 @@
 
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
-      const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks);
+      const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, targetRounds);
       const rawIncomingPerPc = rawAttackDpr / spread + rawAdditiveDpr;
       const totalDprPerPc = rawIncomingPerPc * dprMult;
       const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
@@ -1513,13 +1572,21 @@
     const result = computePacingResult();
     _lastPacingResult = result;
     renderPacingResult(result);
+    updatePacingActionButtons(result);
+    setStatus("Pacing computed.", 2000);
+  }
+
+  function updatePacingActionButtons(result) {
     if (els.btnApplyPacingHp) {
       els.btnApplyPacingHp.disabled = result.recommendedBossHp <= 0;
     }
     if (els.btnApplyPacingDpr) {
       els.btnApplyPacingDpr.disabled = !(Number.isFinite(result.targetBossDprMult) && result.targetBossDprMult >= 0);
     }
-    setStatus("Pacing computed.", 2000);
+    if (els.btnApplyBossKitMult) {
+      const mult = bossDprMultiplier(state);
+      els.btnApplyBossKitMult.disabled = !(Number.isFinite(mult) && mult > 0 && Math.abs(mult - 1) >= 0.005);
+    }
   }
 
   function applyPacingHp() {
@@ -1541,6 +1608,32 @@
     refreshReport();
     runComputePacing();
     setStatus(`Boss DPR multiplier set to ${state.boss_dpr_mult.toFixed(2)}x.`, 2500);
+  }
+
+  function applyBossKitMultiplier() {
+    const mult = bossDprMultiplier(state);
+    if (!Number.isFinite(mult) || mult <= 0 || Math.abs(mult - 1) < 0.005) {
+      setStatus("No non-1x boss DPR multiplier to apply.", 2500);
+      return;
+    }
+
+    state.attacks_table = state.attacks_table.map((row) => ({
+      ...row,
+      Damage: scaleDamageExpression(row.Damage, mult),
+    })).map(sanitizeAttackRow);
+
+    state.lair_avg = round2(Math.max(0, safeFloat(state.lair_avg, 0) * mult));
+    state.rech_avg = round2(Math.max(0, safeFloat(state.rech_avg, 0) * mult));
+    state.lair_formula = damageFormulaForAverage(state.lair_avg, 6);
+    state.rech_formula = damageFormulaForAverage(state.rech_avg, 6);
+    state.boss_dpr_mult = 1;
+
+    syncControlsFromState();
+    persistState();
+    renderAttackSection();
+    refreshReport();
+    runComputePacing();
+    setStatus(`Baked ${mult.toFixed(2)}x DPR into boss kit formulas and reset multiplier to 1x.`, 3500);
   }
 
   function renderPacingResult(r) {
@@ -1720,22 +1813,36 @@
     };
   }
 
-  function perRoundDprVsPc(pcRow, mode, attacks) {
+  function perRoundDprVsPc(pcRow, mode, attacks, horizonRounds = 1) {
     const ac = Math.max(1, safeInt(pcRow.AC, 10));
     let total = 0;
 
     for (const atk of attacks) {
-      if (atk.uses_per_round <= 0) continue;
+      const uses = effectiveUsesPerRound(atk, horizonRounds);
+      if (uses <= 0) continue;
       let dpr = 0;
       if (atk.kind === "save") {
         dpr = expectedSaveHalfDamage(atk.dc, getSaveBonus(pcRow, atk.save_stat), atk.damage_expr);
       } else {
         dpr = expectedAttackDamage(ac, atk.attack_bonus, atk.damage_expr, mode);
       }
-      total += dpr * atk.uses_per_round;
+      total += dpr * uses;
     }
 
     return total;
+  }
+
+  function effectiveUsesPerRound(atk, horizonRounds) {
+    const perRound = Math.max(0, safeInt(atk && atk.uses_per_round, 0));
+    if (perRound <= 0) return 0;
+    const encounterUses = Math.max(0, safeInt(atk && atk.uses_encounter, 0));
+    if (encounterUses <= 0) return perRound;
+    return Math.min(perRound, encounterUses / Math.max(1, safeFloat(horizonRounds, 1)));
+  }
+
+  function attackUseCapacity(atk) {
+    const encounterUses = Math.max(0, safeInt(atk && atk.uses_encounter, 0));
+    return encounterUses > 0 ? encounterUses : Number.POSITIVE_INFINITY;
   }
 
   function bossDprMultiplier(opts) {
@@ -1772,6 +1879,7 @@
         save_stat: saveStat,
         damage_expr: String(row.Damage || "1d6"),
         uses_per_round: Math.max(0, safeInt(row["Uses/round"], 1)),
+        uses_encounter: Math.max(0, safeInt(row["Uses/encounter"], 0)),
         is_melee: Boolean(row["Melee?"]),
       });
     }
@@ -1927,6 +2035,76 @@
       avgDice += count * (sides + (sides + 1) / 2);
     }
     return Math.max(0, parsed.sign * (avgDice + parsed.mod));
+  }
+
+  function scaleDamageExpression(expr, multiplier) {
+    const avg = averageDamage(expr);
+    const targetAvg = Math.max(0, avg * Math.max(0, safeFloat(multiplier, 1)));
+    const preferredSides = dominantDieSides(expr) || 6;
+    return damageFormulaForAverage(targetAvg, preferredSides);
+  }
+
+  function dominantDieSides(expr) {
+    const parsed = parseDamageExpression(expr);
+    if (!parsed.dice.length) return 6;
+
+    const bySides = new Map();
+    for (const [count, sides] of parsed.dice) {
+      if (sides <= 0) continue;
+      bySides.set(sides, (bySides.get(sides) || 0) + Math.abs(count));
+    }
+
+    let bestSides = 6;
+    let bestCount = 0;
+    for (const [sides, count] of bySides.entries()) {
+      if (count > bestCount) {
+        bestSides = sides;
+        bestCount = count;
+      }
+    }
+    return bestSides;
+  }
+
+  function damageFormulaForAverage(targetAvg, preferredSides = 6) {
+    const avg = Math.max(0, safeFloat(targetAvg, 0));
+    if (avg <= 0.05) return "0";
+
+    const sideCandidates = uniqueNumbers([preferredSides, 6, 8, 10, 12, 4, 20, 5, 3, 2, 1])
+      .filter((n) => n >= 1 && n <= 100);
+    let best = null;
+
+    for (const sides of sideCandidates) {
+      const dieAvg = (sides + 1) / 2;
+      const maxCount = Math.max(1, Math.min(40, Math.ceil(avg / dieAvg) + 4));
+      for (let count = 1; count <= maxCount; count += 1) {
+        const baseAvg = count * dieAvg;
+        const mod = Math.max(0, Math.round(avg - baseAvg));
+        const candidateAvg = baseAvg + mod;
+        const err = Math.abs(candidateAvg - avg);
+        const sidePenalty = sides === preferredSides ? 0 : 0.02;
+        const complexity = count * 0.01 + (mod > 0 ? 0.005 : 0) + sidePenalty;
+        const score = err + complexity;
+        if (!best || score < best.score) {
+          best = { count, sides, mod, score };
+        }
+      }
+    }
+
+    if (!best) return String(Math.max(0, Math.round(avg)));
+    const dice = `${best.count}d${best.sides}`;
+    return best.mod > 0 ? `${dice}+${best.mod}` : dice;
+  }
+
+  function uniqueNumbers(values) {
+    const out = [];
+    const seen = new Set();
+    for (const value of values) {
+      const n = Math.max(0, safeInt(value, 0));
+      if (seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+    }
+    return out;
   }
 
   function rollDamageOne(expr) {
@@ -2156,12 +2334,14 @@
 
     base.lair_enabled = Boolean(base.lair_enabled);
     base.lair_avg = Math.max(0, safeFloat(base.lair_avg, 6.0));
+    base.lair_formula = String(base.lair_formula || damageFormulaForAverage(base.lair_avg, 6)).trim();
     base.lair_targets = Math.max(1, safeInt(base.lair_targets, 2));
     base.lair_every_n = Math.max(1, safeInt(base.lair_every_n, 2));
 
     base.rech_enabled = Boolean(base.rech_enabled);
     base.recharge_text = String(base.recharge_text || "5-6");
     base.rech_avg = Math.max(0, safeFloat(base.rech_avg, 22.0));
+    base.rech_formula = String(base.rech_formula || damageFormulaForAverage(base.rech_avg, 6)).trim();
     base.rech_targets = Math.max(1, safeInt(base.rech_targets, 1));
 
     base.rider_mode = ["none", "grant advantage on melee next round", "-2 AC next round"].includes(String(base.rider_mode))
@@ -2295,6 +2475,7 @@
       Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
       Damage: String(row.Damage || "1d6").trim() || "1d6",
       "Uses/round": Math.max(0, safeInt(row["Uses/round"], 1)),
+      "Uses/encounter": Math.max(0, safeInt(row["Uses/encounter"], 0)),
       "Melee?": Boolean(row["Melee?"]),
       "Enabled?": Boolean(row["Enabled?"]),
     };

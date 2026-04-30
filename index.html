@@ -98,7 +98,10 @@
         <div class="card">
           <div class="card-head">
             <h2>Boss Attacks</h2>
-            <button id="btnAddAttackRow" class="btn btn-accent">+ Add Attack</button>
+            <div class="button-row">
+              <button id="btnAddAttackRow" class="btn btn-accent">+ Add Attack</button>
+              <button id="btnAddLimitedAttackRow" class="btn">+ Limited Ability</button>
+            </div>
           </div>
           <div id="attacksTable" class="table-mount"></div>
         </div>
@@ -142,6 +145,9 @@
               <label>Lair Avg Damage
                 <input id="optLairAvg" type="number" min="0" max="9999" step="0.1">
               </label>
+              <label>Lair Dice Formula
+                <input id="optLairFormula" type="text" placeholder="generated from average">
+              </label>
               <label>Lair Targets
                 <input id="optLairTargets" type="number" min="1" max="99" step="1">
               </label>
@@ -154,6 +160,9 @@
               </label>
               <label>Recharge Avg Damage
                 <input id="optRechAvg" type="number" min="0" max="9999" step="0.1">
+              </label>
+              <label>Recharge Dice Formula
+                <input id="optRechFormula" type="text" placeholder="generated from average">
               </label>
               <label>Recharge Targets
                 <input id="optRechTargets" type="number" min="1" max="99" step="1">
@@ -304,6 +313,7 @@
             <button id="btnAutoTune" class="btn">Tune HP by MC</button>
             <button id="btnApplyPacingHp" class="btn btn-success" disabled>Apply Target HP</button>
             <button id="btnApplyPacingDpr" class="btn btn-success" disabled>Apply Target DPR</button>
+            <button id="btnApplyBossKitMult" class="btn" disabled>Apply Mult to Boss Kit</button>
           </div>
         </div>
 

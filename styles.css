@@ -433,6 +433,7 @@ main { margin-top: 12px; }
   margin-bottom: 10px;
 }
 .card-head .btn { flex-shrink: 0; }
+.card-head .button-row { margin: 0; }
 .card-action {
   display: flex;
   justify-content: space-between;
