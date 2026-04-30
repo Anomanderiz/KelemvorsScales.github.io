@@ -312,31 +312,19 @@
     });
 
     els.btnRunEncounter.addEventListener("click", () => {
-      setBtnLoading(els.btnRunEncounter, true);
-      setTimeout(() => {
-        runEncounterAndRender();
-        setBtnLoading(els.btnRunEncounter, false);
-      }, 0);
+      runButtonAction(els.btnRunEncounter, runEncounterAndRender, "Full analysis failed.");
     });
 
     els.btnAutoTune.addEventListener("click", () => {
-      setBtnLoading(els.btnAutoTune, true);
-      setTimeout(() => {
-        autoTuneBossHp();
-        setBtnLoading(els.btnAutoTune, false);
-      }, 0);
+      runButtonAction(els.btnAutoTune, autoTuneBossHp, "Monte Carlo tuning failed.");
     });
 
     els.btnRunMc.addEventListener("click", () => {
-      setBtnLoading(els.btnRunMc, true);
-      setTimeout(() => {
-        runSingleTargetMc();
-        setBtnLoading(els.btnRunMc, false);
-      }, 0);
+      runButtonAction(els.btnRunMc, runSingleTargetMc, "Single-target Monte Carlo failed.");
     });
 
     els.btnComputePacing.addEventListener("click", () => {
-      runComputePacing();
+      runGuardedAction(runComputePacing, "Deterministic pacing failed.");
     });
 
     els.btnApplyPacingHp.addEventListener("click", () => {
@@ -395,6 +383,33 @@
       state.tune_target_median = rounds;
       return rounds;
     });
+  }
+
+  function runButtonAction(button, action, failureMessage) {
+    setBtnLoading(button, true);
+    setTimeout(() => {
+      try {
+        action();
+      } catch (error) {
+        reportActionError(error, failureMessage);
+      } finally {
+        setBtnLoading(button, false);
+      }
+    }, 0);
+  }
+
+  function runGuardedAction(action, failureMessage) {
+    try {
+      action();
+    } catch (error) {
+      reportActionError(error, failureMessage);
+    }
+  }
+
+  function reportActionError(error, failureMessage) {
+    console.error(failureMessage, error);
+    const detail = error && error.message ? error.message : String(error);
+    setStatus(`${failureMessage} ${detail}`, 5000);
   }
 
   function bindControl(id, key, parser, options = {}) {
@@ -1426,7 +1441,9 @@
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const lairDpr = lairPerTargetDpr(state, party.length || 1);
     const rechDpr = rechargePerTargetDpr(state, party.length || 1);
-    const additiveDpr = lairDpr + rechDpr;
+    const rawAdditiveDpr = lairDpr + rechDpr;
+    const dprMult = bossDprMultiplier(state);
+    const additiveDpr = rawAdditiveDpr * dprMult;
 
     let firstDownRound = Infinity;
     let lastDownRound = 0;
@@ -1549,9 +1566,10 @@
       applyMetricClass(els.pacingPartyWipe, "success");
     }
 
+    const bossDprMult = Number.isFinite(r.bossDprMult) ? r.bossDprMult : 1;
     setText(els.pacingTargetDpr, Number.isFinite(r.targetBossDprMult) ? `${r.targetBossDprMult.toFixed(2)}x` : "N/A");
     const currentDprHint = r.toughestPcName
-      ? `current ${r.bossDprMult.toFixed(2)}x; ${r.toughestPcName} lasts ${r.targetRounds}R`
+      ? `current ${bossDprMult.toFixed(2)}x; ${r.toughestPcName} lasts ${r.targetRounds}R`
       : "no boss damage";
     setText(els.pacingTargetDprSub, currentDprHint);
 
