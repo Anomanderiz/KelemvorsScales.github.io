@@ -753,8 +753,8 @@
         datasets: [{
           label: "Rounds to 0 (Ceil)",
           data: chartValues,
-          backgroundColor: "rgba(43, 196, 176, 0.74)",
-          borderColor: "rgba(43, 196, 176, 1)",
+          backgroundColor: "rgba(191,26,47,0.72)",
+          borderColor: "rgba(191,26,47,1)",
           borderWidth: 1,
         }],
       },
@@ -798,8 +798,8 @@
           datasets: [{
             label: `Damage over ${state.mc_rounds} rounds`,
             data: hist.values,
-            backgroundColor: "rgba(255, 122, 69, 0.70)",
-            borderColor: "rgba(255, 122, 69, 1)",
+            backgroundColor: "rgba(200,152,40,0.72)",
+            borderColor: "rgba(200,152,40,1)",
             borderWidth: 1,
             barPercentage: 1,
             categoryPercentage: 1,
@@ -858,8 +858,8 @@
           label: "S(t): Boss alive",
           data: metrics.survivalCurve,
           stepped: true,
-          borderColor: "rgba(43, 196, 176, 1)",
-          backgroundColor: "rgba(43, 196, 176, 0.25)",
+          borderColor: "rgba(191,26,47,1)",
+          backgroundColor: "rgba(191,26,47,0.18)",
           fill: true,
           pointRadius: 0,
           tension: 0,
@@ -882,8 +882,8 @@
         datasets: [{
           label: "TTK Frequency",
           data: hist.values,
-          backgroundColor: "rgba(255, 122, 69, 0.72)",
-          borderColor: "rgba(255, 122, 69, 1)",
+          backgroundColor: "rgba(191,26,47,0.70)",
+          borderColor: "rgba(191,26,47,1)",
           borderWidth: 1,
           barPercentage: 1,
           categoryPercentage: 1,
@@ -1987,12 +1987,12 @@
       maintainAspectRatio: false,
       animation: false,
       plugins: {
-        legend: { labels: { color: "#ecf3f9" } },
+        legend: { labels: { color: "#f0ebe0" } },
         title: { display: false, color: "#ecf3f9" },
       },
       scales: {
-        x: { ticks: { color: "#a9c2d7" }, grid: { color: "rgba(255,255,255,0.08)" } },
-        y: { ticks: { color: "#a9c2d7" }, grid: { color: "rgba(255,255,255,0.08)" } },
+        x: { ticks: { color: "#aa9080" }, grid: { color: "rgba(191,26,47,0.12)" } },
+        y: { ticks: { color: "#aa9080" }, grid: { color: "rgba(255,255,255,0.08)" } },
       },
     }, overrides);
   }

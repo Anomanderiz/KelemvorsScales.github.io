@@ -6,40 +6,52 @@
   <title>Kelemvor's Scales — D&D 2024 Encounter Balancer</title>
   <meta name="description" content="Monte Carlo encounter balancer and boss auto-tuner for D&D 2024.">
   <link rel="icon" type="image/x-icon" href="assets/icon.ico">
+
+  <!-- Fonts: Space Grotesk (body) + IBM Plex Mono (code) + Cinzel (D&D headings) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="styles.css">
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
+
+  <!-- ── Animated background layers ── -->
+  <div class="bg-base"   aria-hidden="true"></div>
   <div class="bg-orb orb-a" aria-hidden="true"></div>
   <div class="bg-orb orb-b" aria-hidden="true"></div>
-  <div class="bg-grid"      aria-hidden="true"></div>
+  <div class="bg-orb orb-c" aria-hidden="true"></div>
+  <div class="bg-embers" aria-hidden="true"></div>
+  <div class="bg-grid"   aria-hidden="true"></div>
 
   <div class="app-shell">
 
-    <!-- ── Header ── -->
+    <!-- ══════════════════════════════════════════════════════
+         HEADER
+         ══════════════════════════════════════════════════════ -->
     <header class="hero">
       <div class="brand">
-        <img src="assets/icon.ico" alt="Kelemvor icon" class="brand-icon">
+        <img src="assets/icon.ico" alt="Kelemvor scale icon" class="brand-icon">
         <div>
           <h1>Kelemvor's Scales</h1>
-          <p>D&D 2024 Encounter Balancer — Monte Carlo + Auto-Tune</p>
+          <p>D&amp;D 2024 · Encounter Balancer · Monte Carlo + Auto-Tune</p>
         </div>
       </div>
       <div class="hero-actions">
-        <button id="btnSaveLocal"  class="btn" title="Save state to browser localStorage">Save Local</button>
-        <button id="btnExportJson" class="btn" title="Export current profile as JSON">Export JSON</button>
-        <label  class="btn btn-file" title="Import a previously exported JSON profile">
+        <button id="btnSaveLocal"  class="btn" title="Force-save to browser localStorage">Save Local</button>
+        <button id="btnExportJson" class="btn" title="Download profile as JSON">Export JSON</button>
+        <label  class="btn btn-file" title="Load a previously exported JSON profile">
           Import JSON
           <input id="inputImportJson" type="file" accept=".json,application/json" aria-label="Import JSON profile">
         </label>
       </div>
     </header>
 
-    <!-- ── Tab navigation ── -->
+    <!-- ══════════════════════════════════════════════════════
+         TAB NAV
+         ══════════════════════════════════════════════════════ -->
     <nav class="tabbar" aria-label="Application sections">
       <button class="tab active" data-tab="party">Party &amp; DPR</button>
       <button class="tab"        data-tab="boss">Boss Kit</button>
@@ -62,19 +74,19 @@
             <h2>Party Composition</h2>
             <button id="btnAddPartyRow" class="btn btn-accent">+ Add PC</button>
           </div>
-          <p class="hint">Define each party member's name, AC, HP, and saving-throw modifiers.</p>
+          <p class="hint">Name, AC, HP and saving-throw modifiers for each party member.</p>
           <div id="partyTable" class="table-mount"></div>
         </div>
 
         <div class="split">
           <div class="card">
             <h2>DPR Input</h2>
-            <p class="hint">Per-PC all-hits baseline DPR. Nova conversion uses this as the raw input.</p>
+            <p class="hint">Per-PC all-hits baseline DPR. Used as input for nova conversion.</p>
             <div id="dprTable" class="table-mount"></div>
           </div>
           <div class="card">
             <h2>Nova Conversion</h2>
-            <p class="hint">Configure delivery method (attack / save / auto-hit), roll mode, and uptime to convert raw DPR to effective DPR vs the boss.</p>
+            <p class="hint">Configure delivery method, roll mode, and uptime to compute effective DPR vs the boss.</p>
             <div id="novaTable" class="table-mount"></div>
           </div>
         </div>
@@ -182,13 +194,13 @@
         </div>
         <div class="card">
           <div class="chart-wrap">
-            <canvas id="detChart" aria-label="Rounds to zero chart"></canvas>
+            <canvas id="detChart" aria-label="Rounds to zero per party member"></canvas>
           </div>
         </div>
       </section>
 
       <!-- ══════════════════════════════════════════════════════
-           PACING CALCULATOR  (new)
+           PACING CALCULATOR
            ══════════════════════════════════════════════════════ -->
       <section id="panel-pacing" class="panel">
         <div class="card">
@@ -196,54 +208,52 @@
             <h2>Encounter Pacing Calculator</h2>
           </div>
           <p class="hint">
-            Set a target encounter length. The calculator recommends boss HP for the boss to die
-            in that many rounds, shows how long the party survives at current boss DPR, and tells
-            you what boss attack DPR is needed so the last PC falls exactly at round N.
+            Set a target encounter length in rounds. The tool computes the boss HP needed for the
+            boss to die in that many rounds, how long the party survives at current boss DPR, and
+            what total boss attack DPR is needed for the last PC to fall exactly at round N.
           </p>
           <div class="form-grid">
             <label>Target Encounter Rounds
-              <input id="pacingRounds" type="number" min="1" max="30" step="1" value="5">
+              <input id="pacingRounds" type="number" min="1" max="30" step="1">
             </label>
           </div>
           <div class="button-row">
-            <button id="btnComputePacing"  class="btn btn-accent">Compute Pacing</button>
-            <button id="btnApplyPacingHp"  class="btn btn-success" disabled>Apply Recommended HP</button>
+            <button id="btnComputePacing" class="btn btn-accent">Compute Pacing</button>
+            <button id="btnApplyPacingHp" class="btn btn-success" disabled>Apply Recommended HP</button>
           </div>
         </div>
 
-        <!-- Metric cards -->
+        <!-- Four metric cards -->
         <div class="pacing-metrics">
           <div class="card metric-card">
-            <div class="metric-label">Recommended Boss HP</div>
+            <div class="metric-label">Recommended HP</div>
             <div class="metric-value" id="pacingBossHp">—</div>
-            <div class="metric-sub"   id="pacingBossHpSub">for boss to die in N rounds</div>
+            <div class="metric-sub"   id="pacingBossHpSub">boss dies in N rounds</div>
           </div>
           <div class="card metric-card">
             <div class="metric-label">First PC Falls</div>
             <div class="metric-value" id="pacingFirstDown">—</div>
-            <div class="metric-sub">round (at current boss DPR)</div>
+            <div class="metric-sub">round (current boss DPR)</div>
           </div>
           <div class="card metric-card">
             <div class="metric-label">Party Wipe</div>
             <div class="metric-value" id="pacingPartyWipe">—</div>
-            <div class="metric-sub">round (at current boss DPR)</div>
+            <div class="metric-sub">round (current boss DPR)</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">Target Boss Attack DPR</div>
+            <div class="metric-label">Target Attack DPR</div>
             <div class="metric-value" id="pacingTargetDpr">—</div>
-            <div class="metric-sub"   id="pacingTargetDprSub">to wipe party in N rounds</div>
+            <div class="metric-sub"   id="pacingTargetDprSub">wipe party in N rounds</div>
           </div>
         </div>
 
-        <!-- Balance analysis -->
         <div class="card">
           <h3>Balance Analysis</h3>
           <div id="pacingBalance" class="pacing-balance">
-            Click <strong>Compute Pacing</strong> to see the balance analysis.
+            Click <strong>Compute Pacing</strong> to see the encounter balance analysis.
           </div>
         </div>
 
-        <!-- Per-PC breakdown -->
         <div class="card">
           <h3>Per-PC Time-to-Die (at current boss DPR)</h3>
           <div id="pacingTable" class="table-mount"></div>
@@ -341,7 +351,6 @@
               <input id="tuneTpkCap" type="number" min="0" max="1"  step="0.001">
             </label>
           </div>
-
           <div class="button-row">
             <button id="btnRunEncounter" class="btn btn-accent">Run Encounter</button>
             <button id="btnAutoTune"     class="btn">Auto-Tune HP</button>
@@ -374,14 +383,15 @@
       <section id="panel-report" class="panel">
         <div class="card">
           <h2>State Report</h2>
-          <p class="hint">Full JSON snapshot of current state — copy for manual backup or inspection.</p>
+          <p class="hint">Full JSON snapshot — copy for manual backup or inspection. State is auto-saved to browser storage on every change.</p>
           <textarea id="reportText" readonly aria-label="JSON state report"></textarea>
         </div>
       </section>
 
     </main>
 
-    <footer class="statusbar" id="statusBar" aria-live="polite">Ready.</footer>
+    <footer class="statusbar" id="statusBar" role="status" aria-live="polite">Ready.</footer>
   </div>
+
 </body>
 </html>
