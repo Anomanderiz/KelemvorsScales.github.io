@@ -56,10 +56,9 @@
       <button class="tab active" data-tab="party">Party &amp; DPR</button>
       <button class="tab"        data-tab="boss">Boss Kit</button>
       <button class="tab"        data-tab="det">Det. DPR</button>
-      <button class="tab"        data-tab="pacing">Pacing</button>
       <button class="tab"        data-tab="ttd">Boss TTD</button>
       <button class="tab"        data-tab="mc">Boss→PC MC</button>
-      <button class="tab"        data-tab="enc">Encounter MC</button>
+      <button class="tab"        data-tab="enc">Balancer</button>
       <button class="tab"        data-tab="report">Report</button>
     </nav>
 
@@ -202,63 +201,6 @@
       <!-- ══════════════════════════════════════════════════════
            PACING CALCULATOR
            ══════════════════════════════════════════════════════ -->
-      <section id="panel-pacing" class="panel">
-        <div class="card">
-          <div class="card-head">
-            <h2>Encounter Pacing Calculator</h2>
-          </div>
-          <p class="hint">
-            Set a target encounter length in rounds. The tool computes the boss HP needed for the
-            boss to die in that many rounds, how long the party survives at current boss DPR, and
-            what total boss attack DPR is needed for the last PC to fall exactly at round N.
-          </p>
-          <div class="form-grid">
-            <label>Target Encounter Rounds
-              <input id="pacingRounds" type="number" min="1" max="30" step="1">
-            </label>
-          </div>
-          <div class="button-row">
-            <button id="btnComputePacing" class="btn btn-accent">Compute Pacing</button>
-            <button id="btnApplyPacingHp" class="btn btn-success" disabled>Apply Recommended HP</button>
-          </div>
-        </div>
-
-        <!-- Four metric cards -->
-        <div class="pacing-metrics">
-          <div class="card metric-card">
-            <div class="metric-label">Recommended HP</div>
-            <div class="metric-value" id="pacingBossHp">—</div>
-            <div class="metric-sub"   id="pacingBossHpSub">boss dies in N rounds</div>
-          </div>
-          <div class="card metric-card">
-            <div class="metric-label">First PC Falls</div>
-            <div class="metric-value" id="pacingFirstDown">—</div>
-            <div class="metric-sub">round (current boss DPR)</div>
-          </div>
-          <div class="card metric-card">
-            <div class="metric-label">Party Wipe</div>
-            <div class="metric-value" id="pacingPartyWipe">—</div>
-            <div class="metric-sub">round (current boss DPR)</div>
-          </div>
-          <div class="card metric-card">
-            <div class="metric-label">Target Attack DPR</div>
-            <div class="metric-value" id="pacingTargetDpr">—</div>
-            <div class="metric-sub"   id="pacingTargetDprSub">wipe party in N rounds</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Balance Analysis</h3>
-          <div id="pacingBalance" class="pacing-balance">
-            Click <strong>Compute Pacing</strong> to see the encounter balance analysis.
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Per-PC Time-to-Die (at current boss DPR)</h3>
-          <div id="pacingTable" class="table-mount"></div>
-        </div>
-      </section>
 
       <!-- ══════════════════════════════════════════════════════
            BOSS TTD
@@ -321,16 +263,31 @@
            ══════════════════════════════════════════════════════ -->
       <section id="panel-enc" class="panel">
         <div class="card">
-          <h2>Encounter Simulation</h2>
+          <div class="card-head">
+            <h2>Encounter Balancer</h2>
+          </div>
+          <p class="hint">
+            One target drives both modes: deterministic pacing sets exact boss HP and DPR targets,
+            while Monte Carlo validates median TTK, TPK probability, and casualty risk.
+          </p>
           <div class="form-grid">
+            <label>Target Encounter Rounds
+              <input id="pacingRounds" type="number" min="1" max="30" step="1">
+            </label>
+            <label>TPK Cap (0-1)
+              <input id="tuneTpkCap" type="number" min="0" max="1" step="0.001">
+            </label>
+            <label>Boss DPR Multiplier
+              <input id="optBossDprMult" type="number" min="0" max="20" step="0.01">
+            </label>
             <label>Trials
-              <input id="encTrials"    type="number" min="1000" max="300000" step="1000">
+              <input id="encTrials" type="number" min="1000" max="300000" step="1000">
             </label>
             <label>Max Rounds
-              <input id="encMaxRounds" type="number" min="1"    max="50"     step="1">
+              <input id="encMaxRounds" type="number" min="1" max="50" step="1">
             </label>
             <label>Party DPR CV
-              <input id="encDprCv"     type="number" min="0.05" max="2"      step="0.01">
+              <input id="encDprCv" type="number" min="0.05" max="2" step="0.01">
             </label>
             <label>Initiative
               <select id="encInitiative">
@@ -339,27 +296,54 @@
                 <option value="boss_first">Boss First</option>
               </select>
             </label>
-            <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR → Effective</label>
-          </div>
-
-          <h3>Auto-Tune</h3>
-          <div class="form-grid">
-            <label>Target Median TTK (rounds)
-              <input id="tuneMedian"  type="number" min="1" max="20" step="0.1">
-            </label>
-            <label>TPK Cap (0–1)
-              <input id="tuneTpkCap" type="number" min="0" max="1"  step="0.001">
-            </label>
+            <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR to Effective</label>
           </div>
           <div class="button-row">
-            <button id="btnRunEncounter" class="btn btn-accent">Run Encounter</button>
-            <button id="btnAutoTune"     class="btn">Auto-Tune HP</button>
+            <button id="btnRunEncounter" class="btn btn-accent">Run Full Analysis</button>
+            <button id="btnComputePacing" class="btn">Deterministic Only</button>
+            <button id="btnAutoTune" class="btn">Tune HP by MC</button>
+            <button id="btnApplyPacingHp" class="btn btn-success" disabled>Apply Target HP</button>
+            <button id="btnApplyPacingDpr" class="btn btn-success" disabled>Apply Target DPR</button>
           </div>
+        </div>
+
+        <div class="pacing-metrics">
+          <div class="card metric-card">
+            <div class="metric-label">Target HP</div>
+            <div class="metric-value" id="pacingBossHp">-</div>
+            <div class="metric-sub" id="pacingBossHpSub">exact target rounds</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">First PC Falls</div>
+            <div class="metric-value" id="pacingFirstDown">-</div>
+            <div class="metric-sub">deterministic round</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Party Wipe</div>
+            <div class="metric-value" id="pacingPartyWipe">-</div>
+            <div class="metric-sub">deterministic round</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Boss DPR Mult</div>
+            <div class="metric-value" id="pacingTargetDpr">-</div>
+            <div class="metric-sub" id="pacingTargetDprSub">target pressure</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Balance Verdict</h3>
+          <div id="pacingBalance" class="pacing-balance">
+            Run analysis to combine exact pacing and Monte Carlo risk.
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Monte Carlo Validation</h3>
           <div class="stats-grid">
             <div id="lblTtkMedian" class="stat"></div>
-            <div id="lblTtkP1090"  class="stat"></div>
-            <div id="lblTpk"       class="stat"></div>
-            <div id="lblDowns"     class="stat"></div>
+            <div id="lblTtkP1090" class="stat"></div>
+            <div id="lblTpk" class="stat"></div>
+            <div id="lblDowns" class="stat"></div>
           </div>
         </div>
 
@@ -374,6 +358,11 @@
               <canvas id="ttkChart" aria-label="Time-to-kill distribution"></canvas>
             </div>
           </div>
+        </div>
+
+        <div class="card">
+          <h3>Per-PC Deterministic Pressure</h3>
+          <div id="pacingTable" class="table-mount"></div>
         </div>
       </section>
 

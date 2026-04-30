@@ -52,6 +52,7 @@
     boss_ac: 16,
     resist_factor: 1.0,
     boss_regen: 0.0,
+    boss_dpr_mult: 1.0,
 
     mc_rounds: 3,
     mc_trials: 10000,
@@ -187,7 +188,7 @@
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
       "btnAddAttackRow", "attacksTable",
-      "optModeSelect", "optSpreadTargets", "optThpExpr", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen",
+      "optModeSelect", "optSpreadTargets", "optThpExpr", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
       "optLairEnabled", "optLairAvg", "optLairTargets", "optLairEveryN",
       "optRechEnabled", "optRechargeText", "optRechAvg", "optRechTargets",
       "optRiderMode", "optRiderDuration", "optRiderMeleeOnly",
@@ -201,7 +202,7 @@
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
       "reportText",
-      "pacingRounds", "btnComputePacing", "btnApplyPacingHp",
+      "pacingRounds", "btnComputePacing", "btnApplyPacingHp", "btnApplyPacingDpr",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
     ];
@@ -217,7 +218,6 @@
       party:  document.getElementById("panel-party"),
       boss:   document.getElementById("panel-boss"),
       det:    document.getElementById("panel-det"),
-      pacing: document.getElementById("panel-pacing"),
       ttd:    document.getElementById("panel-ttd"),
       mc:     document.getElementById("panel-mc"),
       enc:    document.getElementById("panel-enc"),
@@ -229,7 +229,7 @@
         const tab = button.dataset.tab;
         tabButtons.forEach((b) => b.classList.toggle("active", b === button));
         Object.entries(panels).forEach(([k, panel]) => {
-          panel.classList.toggle("active", k === tab);
+          if (panel) panel.classList.toggle("active", k === tab);
         });
       });
     }
@@ -342,6 +342,11 @@
     els.btnApplyPacingHp.addEventListener("click", () => {
       applyPacingHp();
     });
+    if (els.btnApplyPacingDpr) {
+      els.btnApplyPacingDpr.addEventListener("click", () => {
+        applyPacingDpr();
+      });
+    }
   }
 
   function bindOptionControls() {
@@ -353,6 +358,7 @@
     bindControl("optBossAc", "boss_ac", (el) => Math.max(1, safeInt(el.value, 16)), { syncParty: true, renderParty: true, refreshEff: true });
     bindControl("optResistFactor", "resist_factor", (el) => Math.max(0.01, safeFloat(el.value, 1.0)), { refreshEff: true });
     bindControl("optBossRegen", "boss_regen", (el) => Math.max(0, safeFloat(el.value, 0.0)), { refreshEff: true });
+    bindControl("optBossDprMult", "boss_dpr_mult", (el) => clamp(safeFloat(el.value, 1.0), 0, 20));
 
     bindControl("optLairEnabled", "lair_enabled", (el) => Boolean(el.checked));
     bindControl("optLairAvg", "lair_avg", (el) => Math.max(0, safeFloat(el.value, 0.0)));
@@ -384,7 +390,11 @@
     bindControl("tuneMedian",    "tune_target_median", (el) => clamp(safeFloat(el.value, 5.0), 1.0, 20.0));
     bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
 
-    bindControl("pacingRounds", "pacing_rounds", (el) => Math.max(1, safeInt(el.value, 5)));
+    bindControl("pacingRounds", "pacing_rounds", (el) => {
+      const rounds = Math.max(1, safeInt(el.value, 5));
+      state.tune_target_median = rounds;
+      return rounds;
+    });
   }
 
   function bindControl(id, key, parser, options = {}) {
@@ -426,6 +436,7 @@
     setControlValue(els.optBossAc, state.boss_ac);
     setControlValue(els.optResistFactor, state.resist_factor);
     setControlValue(els.optBossRegen, state.boss_regen);
+    setControlValue(els.optBossDprMult, state.boss_dpr_mult);
 
     setControlChecked(els.optLairEnabled, state.lair_enabled);
     setControlValue(els.optLairAvg, state.lair_avg);
@@ -711,9 +722,9 @@
   function computeDeterministic() {
     const attacks = attacksEnabledFromTable(state.attacks_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
-    const lairDpr = lairPerTargetDpr(state, party.length || 1);
-    const rechDpr = rechargePerTargetDpr(state, party.length || 1);
-    const additiveDpr = lairDpr + rechDpr;
+    const dprMult = bossDprMultiplier(state);
+    const rawAdditiveDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
+    const additiveDpr = rawAdditiveDpr * dprMult;
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
 
@@ -723,7 +734,7 @@
 
     for (const pc of party) {
       const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks);
-      const total = baseDpr / spread + additiveDpr;
+      const total = (baseDpr * dprMult) / spread + additiveDpr;
       const net = Math.max(0, total - thpAvg);
       const hp = Math.max(1, safeInt(pc.HP, 1));
       const exact = net > 0 ? hp / net : Number.POSITIVE_INFINITY;
@@ -825,6 +836,20 @@
 
   function runEncounterAndRender() {
     setStatus("Running encounter simulation…", 0);
+    const pacing = computePacingResult();
+    _lastPacingResult = pacing;
+    renderPacingResult(pacing);
+    if (state.enc_max_rounds < pacing.targetRounds) {
+      state.enc_max_rounds = pacing.targetRounds;
+      syncControlsFromState();
+      persistState();
+    }
+    if (els.btnApplyPacingHp) {
+      els.btnApplyPacingHp.disabled = pacing.recommendedBossHp <= 0;
+    }
+    if (els.btnApplyPacingDpr) {
+      els.btnApplyPacingDpr.disabled = !(Number.isFinite(pacing.targetBossDprMult) && pacing.targetBossDprMult >= 0);
+    }
     const metrics = runEncounterMc();
     if (metrics.error) {
       alert(metrics.error);
@@ -905,7 +930,11 @@
   function autoTuneBossHp() {
     setStatus("Auto-tuning boss HP...", 0);
 
-    const target = safeFloat(state.tune_target_median, 4.0);
+    const target = Math.max(1, safeFloat(state.pacing_rounds, state.tune_target_median || 4.0));
+    state.tune_target_median = target;
+    if (state.enc_max_rounds < target) {
+      state.enc_max_rounds = Math.ceil(target);
+    }
     const tpkCap = safeFloat(state.tune_tpk_cap, 0.05);
     const originalHp = safeFloat(state.boss_hp, 150);
     const originalTrials = safeInt(state.enc_trials, 10000);
@@ -1026,6 +1055,7 @@
     }
     const thpAvg = Math.max(0, averageDamage(opts.thp_expr || "0"));
     const spreadTargets = Math.max(1, safeInt(opts.spread_targets, 1));
+    const dprMult = bossDprMultiplier(opts);
 
     const totalDamage = new Array(trials).fill(0);
     const riderRemaining = new Array(trials).fill(0);
@@ -1094,7 +1124,7 @@
           }
         }
 
-        totalDamage[i] += Math.max(0, roundDamage - thpAvg);
+        totalDamage[i] += Math.max(0, roundDamage * dprMult - thpAvg);
 
         riderRemaining[i] = Math.max(0, riderRemaining[i] - 1);
         if (triggeredRider) {
@@ -1127,6 +1157,7 @@
     const initMode = String(opts.initiative_mode || "random");
     const useNova = Boolean(opts.enc_use_nova);
     const dprCv = clamp(safeFloat(opts.dpr_cv, 0.6), 0.05, 2.0);
+    const dprMult = bossDprMultiplier(opts);
 
     const effList = effPartyDprs(useNova);
     if (!effList.length) {
@@ -1268,7 +1299,7 @@
               }
             }
 
-            applyDamage(target, Math.max(0, rawDealt));
+            applyDamage(target, Math.max(0, rawDealt * dprMult));
           }
         }
 
@@ -1278,7 +1309,7 @@
             const L = Math.min(Math.max(1, safeInt(opts.lair_targets, 1)), aliveNow.length);
             const targets = sampleWithoutReplacement(aliveNow, L);
             for (const idx of targets) {
-              applyDamage(idx, Math.max(0, gammaRng(Math.max(0, safeFloat(opts.lair_avg, 0)), 0.5)));
+              applyDamage(idx, Math.max(0, gammaRng(Math.max(0, safeFloat(opts.lair_avg, 0)), 0.5) * dprMult));
             }
           }
         }
@@ -1291,7 +1322,7 @@
               const R = Math.min(Math.max(1, safeInt(opts.rech_targets, 1)), aliveNow.length);
               const targets = sampleWithoutReplacement(aliveNow, R);
               for (const idx of targets) {
-                applyDamage(idx, Math.max(0, gammaRng(Math.max(0, safeFloat(opts.rech_avg, 0)), 0.5)));
+                applyDamage(idx, Math.max(0, gammaRng(Math.max(0, safeFloat(opts.rech_avg, 0)), 0.5) * dprMult));
               }
             }
           }
@@ -1400,13 +1431,15 @@
     let firstDownRound = Infinity;
     let lastDownRound = 0;
     let targetAttackDpr = 0;
+    let targetBossDprMult = null;
     let toughestPcName = null;
     const pcRows = [];
 
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
-      const attackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks);
-      const totalDprPerPc = attackDpr / spread + additiveDpr;
+      const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks);
+      const rawIncomingPerPc = rawAttackDpr / spread + rawAdditiveDpr;
+      const totalDprPerPc = rawIncomingPerPc * dprMult;
       const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
       const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
 
@@ -1418,8 +1451,12 @@
       // Target boss attack DPR so THIS PC dies at exactly targetRounds.
       // (neededNetDpr + thpAvg - additiveDpr) × spread = neededTotalAttackDpr
       const neededNetDpr = pcHp / targetRounds;
-      const neededAttackDpr = Math.max(0, (neededNetDpr + thpAvg - additiveDpr) * spread);
-      if (neededAttackDpr > targetAttackDpr) {
+      const targetMultForPc = rawIncomingPerPc > 0
+        ? Math.max(0, (neededNetDpr + thpAvg) / rawIncomingPerPc)
+        : Infinity;
+      const neededAttackDpr = Number.isFinite(targetMultForPc) ? rawIncomingPerPc * targetMultForPc : 0;
+      if (Number.isFinite(targetMultForPc) && (targetBossDprMult == null || targetMultForPc > targetBossDprMult)) {
+        targetBossDprMult = targetMultForPc;
         targetAttackDpr = neededAttackDpr;
         toughestPcName = pc.Name || "?";
       }
@@ -1428,9 +1465,11 @@
         PC: pc.Name || "?",
         HP: pcHp,
         AC: safeInt(pc.AC, 10),
-        "Atk DPR/target": round2(attackDpr / spread),
+        "Base DPR/target": round2(rawIncomingPerPc),
+        "Scaled DPR/target": round2(totalDprPerPc),
         "Additive DPR": round2(additiveDpr),
         "Net DPR": round2(netDprPerPc),
+        "Target Mult": Number.isFinite(targetMultForPc) ? `${targetMultForPc.toFixed(2)}x` : "N/A",
         "TTD (exact)": Number.isFinite(pcTtd) ? pcTtd.toFixed(1) : "∞",
         "TTD (rounds)": Number.isFinite(pcTtd) ? String(Math.ceil(pcTtd)) : "∞",
       });
@@ -1443,6 +1482,8 @@
       firstDownRound: Number.isFinite(firstDownRound) ? firstDownRound : null,
       lastDownRound: lastDownRound > 0 ? lastDownRound : null,
       targetAttackDpr: round2(targetAttackDpr),
+      targetBossDprMult: targetBossDprMult == null ? null : round2(targetBossDprMult),
+      bossDprMult: dprMult,
       toughestPcName,
       currentBossHp: safeFloat(state.boss_hp, 200),
       pcRows,
@@ -1458,6 +1499,9 @@
     if (els.btnApplyPacingHp) {
       els.btnApplyPacingHp.disabled = result.recommendedBossHp <= 0;
     }
+    if (els.btnApplyPacingDpr) {
+      els.btnApplyPacingDpr.disabled = !(Number.isFinite(result.targetBossDprMult) && result.targetBossDprMult >= 0);
+    }
     setStatus("Pacing computed.", 2000);
   }
 
@@ -1470,6 +1514,16 @@
     refreshReport();
     runComputePacing();
     setStatus(`Boss HP set to ${state.boss_hp}.`, 2500);
+  }
+
+  function applyPacingDpr() {
+    if (!_lastPacingResult || !Number.isFinite(_lastPacingResult.targetBossDprMult)) return;
+    state.boss_dpr_mult = clamp(_lastPacingResult.targetBossDprMult, 0, 20);
+    syncControlsFromState();
+    persistState();
+    refreshReport();
+    runComputePacing();
+    setStatus(`Boss DPR multiplier set to ${state.boss_dpr_mult.toFixed(2)}x.`, 2500);
   }
 
   function renderPacingResult(r) {
@@ -1495,8 +1549,10 @@
       applyMetricClass(els.pacingPartyWipe, "success");
     }
 
-    setText(els.pacingTargetDpr, String(r.targetAttackDpr));
-    const currentDprHint = r.toughestPcName ? `to kill ${r.toughestPcName} in ${r.targetRounds}R` : "no PCs";
+    setText(els.pacingTargetDpr, Number.isFinite(r.targetBossDprMult) ? `${r.targetBossDprMult.toFixed(2)}x` : "N/A");
+    const currentDprHint = r.toughestPcName
+      ? `current ${r.bossDprMult.toFixed(2)}x; ${r.toughestPcName} lasts ${r.targetRounds}R`
+      : "no boss damage";
     setText(els.pacingTargetDprSub, currentDprHint);
 
     // Balance analysis
@@ -1527,17 +1583,17 @@
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Very Hard</span>`;
       analysis = `Party wipes at round ${fmt1(partyWipe)} — well before the target ${N} rounds. ` +
-        `Reduce boss DPR or raise party sustain. Target attack DPR of ${r.targetAttackDpr} would make the last PC fall at round ${N}.`;
+        `Reduce boss DPR toward ${fmtMult(r.targetBossDprMult)} or raise party sustain.`;
     } else if (partyWipe != null && partyWipe < N) {
       cls = "bal-warn";
       badge = `<span class="pacing-badge badge-warn">Hard</span>`;
       analysis = `Party wipes at round ${fmt1(partyWipe)} — slightly before target. ` +
-        `Reduce boss attack DPR to ~${r.targetAttackDpr} for the toughest PC (${r.toughestPcName}) to last the full ${N} rounds.`;
+        `Use boss DPR multiplier ${fmtMult(r.targetBossDprMult)} for ${r.toughestPcName} to last the full ${N} rounds.`;
     } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > N * 2.5) {
       cls = "bal-easy";
       badge = `<span class="pacing-badge badge-easy">Very Easy</span>`;
       analysis = `Boss dies in ${N} rounds and the party takes minimal casualties. ` +
-        `To add tension, increase boss attack DPR to ${r.targetAttackDpr} (making the last PC fall at round ${N}).`;
+        `To add tension, increase boss DPR to ${fmtMult(r.targetBossDprMult)}.`;
     } else if (partyWipe != null && partyWipe < N * 1.4) {
       cls = "bal-ok";
       badge = `<span class="pacing-badge badge-ok">Balanced</span>`;
@@ -1547,7 +1603,7 @@
       cls = "bal-easy";
       badge = `<span class="pacing-badge badge-easy">Easy</span>`;
       analysis = `Party survives well past the target encounter length. Consider increasing boss DPR or HP. ` +
-        `Target attack DPR: ${r.targetAttackDpr} for a ${N}-round party wipe.`;
+        `Target boss DPR multiplier: ${fmtMult(r.targetBossDprMult)}.`;
     }
 
     el.className = `pacing-balance ${cls}`;
@@ -1556,6 +1612,10 @@
 
   function fmt1(n) {
     return n == null ? "∞" : Number.isFinite(n) ? n.toFixed(1) : "∞";
+  }
+
+  function fmtMult(n) {
+    return n == null || !Number.isFinite(n) ? "N/A" : `${n.toFixed(2)}x`;
   }
 
   function setText(el, text) {
@@ -1658,6 +1718,10 @@
     }
 
     return total;
+  }
+
+  function bossDprMultiplier(opts) {
+    return clamp(safeFloat(opts && opts.boss_dpr_mult, 1.0), 0, 20);
   }
 
   function lairPerTargetDpr(opts, partySize) {
@@ -2092,6 +2156,7 @@
     base.boss_ac = Math.max(1, safeInt(base.boss_ac, 16));
     base.resist_factor = Math.max(0.01, safeFloat(base.resist_factor, 1.0));
     base.boss_regen = Math.max(0, safeFloat(base.boss_regen, 0.0));
+    base.boss_dpr_mult = clamp(safeFloat(base.boss_dpr_mult, 1.0), 0, 20);
 
     base.mc_rounds = Math.max(1, safeInt(base.mc_rounds, 3));
     base.mc_trials = Math.max(1000, safeInt(base.mc_trials, 10000));
