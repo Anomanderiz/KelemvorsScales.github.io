@@ -134,84 +134,116 @@ body {
   100% { transform: translate(-60px, 30px); opacity: .18; }
 }
 
-/* Ember particles — glowing ash and arcane sparks drifting upward */
-.bg-embers {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+/* Hologram blueprint grid for encounter planning */
+.bg-grid-plane,
+.bg-grid-scan {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bg-grid-plane {
+  opacity: .56;
   mix-blend-mode: screen;
+  perspective: 760px;
 }
-.bg-embers::before {
+.bg-grid-plane::before {
   content: '';
   position: absolute;
-  left: 0; right: 0;
-  top: -35%; height: 150%;
+  left: -28vw;
+  right: -28vw;
+  bottom: -40vh;
+  height: 126vh;
+  transform: rotateX(62deg);
+  transform-origin: bottom center;
   background-image:
-    radial-gradient(circle, rgba(255,160,72,.72) 0%, rgba(210,70,32,.32) 1.6px, transparent 3.2px),
-    radial-gradient(circle, rgba(255,214,126,.52) 0%, transparent 1.5px);
-  background-size: 240px 180px, 360px 260px;
-  background-position: 34px 40px, 160px 110px;
-  animation: embers-drift-a 36s linear infinite, ember-glow 7s ease-in-out infinite alternate;
-  opacity: .36;
-  filter: drop-shadow(0 0 5px rgba(224,90,36,.42));
+    linear-gradient(to right, rgba(255,43,72,.42) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,43,72,.30) 1px, transparent 1px),
+    linear-gradient(to right, rgba(255,43,72,.24) 2px, transparent 2px),
+    linear-gradient(to bottom, rgba(255,43,72,.18) 2px, transparent 2px);
+  background-size: 44px 44px, 44px 44px, 220px 220px, 220px 220px;
+  background-position: 0 0;
+  filter:
+    drop-shadow(0 0 5px rgba(191,26,47,.48))
+    drop-shadow(0 0 16px rgba(191,26,47,.22));
+  animation: holo-grid-drift 22s linear infinite, holo-grid-pulse 5.6s ease-in-out infinite alternate;
 }
-.bg-embers::after {
+.bg-grid-plane::after {
   content: '';
   position: absolute;
-  left: 0; right: 0;
-  top: -35%; height: 150%;
-  background-image:
-    radial-gradient(circle, rgba(230,64,36,.58) 0%, rgba(190,26,47,.28) 1.5px, transparent 3px),
-    radial-gradient(circle, rgba(255,188,72,.44) 0%, transparent 1.3px);
-  background-size: 320px 230px, 470px 340px;
-  background-position: 110px 70px, 48px 210px;
-  animation: embers-drift-b 52s linear infinite;
-  opacity: .26;
-  filter: drop-shadow(0 0 6px rgba(191,26,47,.32));
+  inset: 0;
+  background:
+    linear-gradient(to right, rgba(255,43,72,.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,43,72,.10) 1px, transparent 1px),
+    radial-gradient(ellipse 70% 52% at 50% 82%, rgba(191,26,47,.20), transparent 68%),
+    radial-gradient(ellipse 44% 30% at 50% 58%, rgba(255,42,74,.13), transparent 72%);
+  background-size: 72px 72px, 72px 72px, auto, auto;
+  opacity: .72;
+  animation: holo-flat-pulse 8s ease-in-out infinite alternate;
 }
-/* Third spark layer — tiny bright crimson specks at higher density */
-.bg-sparks {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+/* Soft scan and node glows layered over the grid */
+.bg-grid-scan {
   mix-blend-mode: screen;
+  opacity: .42;
 }
-.bg-sparks::before {
+.bg-grid-scan::before {
   content: '';
   position: absolute;
-  left: 0; right: 0;
-  top: -35%; height: 150%;
+  left: -20%;
+  right: -20%;
+  top: -18%;
+  height: 28%;
+  background:
+    linear-gradient(to bottom, transparent, rgba(255,48,76,.18), transparent),
+    linear-gradient(100deg, transparent 12%, rgba(255,92,112,.28), transparent 72%);
+  filter: blur(10px);
+  animation: holo-scan 9s ease-in-out infinite;
+}
+.bg-grid-scan::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   background-image:
-    radial-gradient(circle, rgba(255,226,154,.68) 0%, transparent 1.2px),
-    radial-gradient(circle, rgba(255,92,44,.52) 0%, transparent 1.5px);
-  background-size: 420px 300px, 520px 390px;
-  background-position: 24px 84px, 220px 190px;
-  animation: sparks-drift 64s linear infinite, spark-twinkle 6s ease-in-out infinite alternate;
-  opacity: .22;
-  filter: drop-shadow(0 0 5px rgba(255,120,56,.42));
+    radial-gradient(circle at 25% 34%, rgba(255,48,76,.34) 0 1px, transparent 2px),
+    radial-gradient(circle at 72% 60%, rgba(255,48,76,.26) 0 1px, transparent 2px),
+    radial-gradient(circle at 45% 78%, rgba(255,170,120,.24) 0 1px, transparent 2px);
+  background-size: 260px 210px, 340px 260px, 480px 360px;
+  animation: holo-nodes 14s ease-in-out infinite alternate;
+  opacity: .40;
 }
-@keyframes embers-drift-a {
-  from { transform: translate3d(-5vw, 9vh, 0); }
-  to   { transform: translate3d(12vw, -11vh, 0); }
+
+@keyframes holo-grid-drift {
+  from { background-position: 0 0; }
+  to   { background-position: 44px 44px; }
 }
-@keyframes embers-drift-b {
-  from { transform: translate3d(8vw, 7vh, 0); }
-  to   { transform: translate3d(-10vw, -9vh, 0); }
+@keyframes holo-grid-pulse {
+  from { opacity: .54; }
+  to   { opacity: .90; }
 }
-@keyframes sparks-drift {
-  from { transform: translate3d(-8vw, 6vh, 0); }
-  to   { transform: translate3d(10vw, -8vh, 0); }
+@keyframes holo-flat-pulse {
+  from { opacity: .38; }
+  to   { opacity: .72; }
 }
-@keyframes ember-glow {
-  from { opacity: .24; }
-  to   { opacity: .40; }
+@keyframes holo-scan {
+  0%   { transform: translateY(-22vh); opacity: 0; }
+  18%  { opacity: .75; }
+  52%  { opacity: .34; }
+  100% { transform: translateY(122vh); opacity: 0; }
 }
-@keyframes spark-twinkle {
-  from { opacity: .14; }
-  to   { opacity: .26; }
+@keyframes holo-nodes {
+  from { opacity: .18; transform: translateY(0); }
+  to   { opacity: .46; transform: translateY(-10px); }
 }
 
 /* ── Respect prefers-reduced-motion ── */
 @media (prefers-reduced-motion: reduce) {
   .orb-a, .orb-b, .orb-c,
-  .bg-embers::before, .bg-embers::after,
-  .bg-sparks::before { animation: none; }
+  .bg-grid-plane::before,
+  .bg-grid-plane::after,
+  .bg-grid-scan::before,
+  .bg-grid-scan::after { animation: none; }
 }
 
 /* ================================================================
