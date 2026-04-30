@@ -45,6 +45,7 @@
     rech_avg: 22.0,
     rech_formula: "4d10",
     rech_targets: 1,
+    phase_table: [],
 
     rider_mode: "none",
     rider_duration: 1,
@@ -128,6 +129,19 @@
     { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
   ];
 
+  const MECHANIC_TYPES = ["auto", "attack", "save"];
+  const PHASE_COLUMNS = [
+    { key: "Round", label: "Round", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
+    { key: "Name", label: "Name", type: "text", parser: (v) => String(v).trim() },
+    { key: "Type", label: "Type", type: "select", options: MECHANIC_TYPES, parser: (v) => normalizeMechanicType(v) },
+    { key: "Attack bonus", label: "Atk Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
+    { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
+    { key: "Targets", label: "Targets", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
+    { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
+  ];
+
   let state = normalizeState(loadStateFromStorage() || {});
   let charts = {
     det: null,
@@ -190,7 +204,7 @@
     const ids = [
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
-      "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable",
+      "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable", "btnAddPhaseMechanic", "phaseTable",
       "optModeSelect", "optSpreadTargets", "optThpExpr", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
       "optLairEnabled", "optLairAvg", "optLairFormula", "optLairTargets", "optLairEveryN",
       "optRechEnabled", "optRechargeText", "optRechAvg", "optRechFormula", "optRechTargets",
@@ -316,6 +330,24 @@
       renderAttackSection();
       refreshReport();
       setStatus("Added limited ability row.", 1500);
+    });
+
+    els.btnAddPhaseMechanic.addEventListener("click", () => {
+      state.phase_table.push({
+        Round: 3,
+        Name: "Raidwide",
+        Type: "save",
+        "Attack bonus": 0,
+        DC: 15,
+        Save: "DEX",
+        Damage: "6d6",
+        Targets: 99,
+        "Enabled?": true,
+      });
+      persistState();
+      renderPhaseSection();
+      refreshReport();
+      setStatus("Added round mechanic.", 1500);
     });
 
     els.btnComputeDet.addEventListener("click", () => {
@@ -491,6 +523,7 @@
     syncControlsFromState();
     renderPartySection();
     renderAttackSection();
+    renderPhaseSection();
     refreshMcTargets();
     refreshEffTableFromMode();
     refreshReport();
@@ -792,20 +825,22 @@
 
   function computeDeterministic() {
     const attacks = attacksEnabledFromTable(state.attacks_table);
+    const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const dprMult = bossDprMultiplier(state);
     const rawAdditiveDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
-    const additiveDpr = rawAdditiveDpr * dprMult;
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
+    const horizonRounds = Math.max(1, safeInt(state.pacing_rounds || state.enc_max_rounds, 1));
 
     const rows = [];
     const chartLabels = [];
     const chartValues = [];
 
     for (const pc of party) {
-      const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, state.pacing_rounds || state.enc_max_rounds || 1);
-      const total = (baseDpr * dprMult) / spread + additiveDpr;
+      const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, horizonRounds);
+      const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, horizonRounds);
+      const total = (baseDpr / spread + rawAdditiveDpr + phaseDpr) * dprMult;
       const net = Math.max(0, total - thpAvg);
       const hp = Math.max(1, safeInt(pc.HP, 1));
       const exact = net > 0 ? hp / net : Number.POSITIVE_INFINITY;
@@ -816,6 +851,7 @@
         AC: safeInt(pc.AC, 10),
         HP: hp,
         "DPR (attacks)": round2(baseDpr / spread),
+        "DPR (mechanics)": round2(phaseDpr),
         "DPR (total)": round2(total),
         "Net DPR (after THP)": round2(net),
         "Rounds to 0 (exact)": Number.isFinite(exact) ? exact.toFixed(2) : "inf",
@@ -1112,6 +1148,7 @@
   }
 
   function runMcSim(pcRow, attacks, opts) {
+    const mechanics = phaseMechanicsEnabledFromTable(opts.phase_table);
     const trials = Math.max(1000, safeInt(opts.mc_trials, 10000));
     const rounds = Math.max(1, safeInt(opts.mc_rounds, 3));
     const ac = Math.max(1, safeInt(pcRow.AC, 10));
@@ -1194,6 +1231,13 @@
           }
         }
 
+        for (const mech of mechanicsForRound(mechanics, rnd)) {
+          const pTarget = Math.min(1, safeFloat(mech.targets, 1) / spreadTargets);
+          if (Math.random() < pTarget) {
+            roundDamage += rollMechanicDamageVsPc(mech, pcRow, currentMode, currentAc, saveBonuses);
+          }
+        }
+
         totalDamage[i] += Math.max(0, roundDamage * dprMult - thpAvg);
 
         riderRemaining[i] = Math.max(0, riderRemaining[i] - 1);
@@ -1214,8 +1258,9 @@
     }
 
     const attacks = attacksEnabledFromTable(state.attacks_table);
-    if (!attacks.length && !opts.lair_enabled && !opts.rech_enabled) {
-      return { error: "Enable at least one attack, lair action, or recharge power." };
+    const mechanics = phaseMechanicsEnabledFromTable(opts.phase_table);
+    if (!attacks.length && !mechanics.length && !opts.lair_enabled && !opts.rech_enabled) {
+      return { error: "Enable at least one attack, round mechanic, lair action, or recharge power." };
     }
 
     const trials = Math.max(1, safeInt(opts.enc_trials, 10000));
@@ -1377,6 +1422,18 @@
           }
         }
 
+        for (const mech of mechanicsForRound(mechanics, rnd)) {
+          aliveNow = aliveIndicesForTrial(pcsAlive[t]);
+          if (!aliveNow.length) break;
+
+          const targetCount = Math.min(Math.max(1, safeInt(mech.targets, 1)), aliveNow.length);
+          const targets = sampleWithoutReplacement(aliveNow, targetCount);
+          for (const target of targets) {
+            const rawDealt = rollMechanicDamageForTarget(mech, target, currentAc, currentMode, pcSaves, saveIndex);
+            applyDamage(target, Math.max(0, rawDealt * dprMult));
+          }
+        }
+
         if (opts.lair_enabled && rnd % Math.max(1, safeInt(opts.lair_every_n, 1)) === 0) {
           aliveNow = aliveIndicesForTrial(pcsAlive[t]);
           if (aliveNow.length) {
@@ -1495,6 +1552,7 @@
 
     // Per-PC TTD at current boss DPR
     const attacks = attacksEnabledFromTable(state.attacks_table);
+    const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
@@ -1514,7 +1572,8 @@
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
       const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, targetRounds);
-      const rawIncomingPerPc = rawAttackDpr / spread + rawAdditiveDpr;
+      const rawPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, targetRounds);
+      const rawIncomingPerPc = rawAttackDpr / spread + rawAdditiveDpr + rawPhaseDpr;
       const totalDprPerPc = rawIncomingPerPc * dprMult;
       const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
       const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
@@ -1524,8 +1583,7 @@
         lastDownRound = Math.max(lastDownRound, pcTtd);
       }
 
-      // Target boss attack DPR so THIS PC dies at exactly targetRounds.
-      // (neededNetDpr + thpAvg - additiveDpr) × spread = neededTotalAttackDpr
+      // Target total boss pressure so THIS PC dies at exactly targetRounds.
       const neededNetDpr = pcHp / targetRounds;
       const targetMultForPc = rawIncomingPerPc > 0
         ? Math.max(0, (neededNetDpr + thpAvg) / rawIncomingPerPc)
@@ -1542,6 +1600,7 @@
         HP: pcHp,
         AC: safeInt(pc.AC, 10),
         "Base DPR/target": round2(rawIncomingPerPc),
+        "Script DPR": round2(rawPhaseDpr),
         "Scaled DPR/target": round2(totalDprPerPc),
         "Additive DPR": round2(additiveDpr),
         "Net DPR": round2(netDprPerPc),
@@ -1574,6 +1633,29 @@
     renderPacingResult(result);
     updatePacingActionButtons(result);
     setStatus("Pacing computed.", 2000);
+  }
+
+  function renderPhaseSection() {
+    renderEditableTable({
+      mount: els.phaseTable,
+      columns: PHASE_COLUMNS,
+      rows: state.phase_table,
+      showRemove: true,
+      onCellChange: (rowIndex, key, value) => {
+        state.phase_table[rowIndex][key] = value;
+        state.phase_table[rowIndex] = sanitizePhaseRow(state.phase_table[rowIndex]);
+        persistState();
+        renderPhaseSection();
+        refreshReport();
+      },
+      onRemoveRow: (rowIndex) => {
+        state.phase_table.splice(rowIndex, 1);
+        persistState();
+        renderPhaseSection();
+        refreshReport();
+      },
+      emptyMessage: "No scripted round mechanics yet.",
+    });
   }
 
   function updatePacingActionButtons(result) {
@@ -1621,6 +1703,10 @@
       ...row,
       Damage: scaleDamageExpression(row.Damage, mult),
     })).map(sanitizeAttackRow);
+    state.phase_table = state.phase_table.map((row) => ({
+      ...row,
+      Damage: scaleDamageExpression(row.Damage, mult),
+    })).map(sanitizePhaseRow);
 
     state.lair_avg = round2(Math.max(0, safeFloat(state.lair_avg, 0) * mult));
     state.rech_avg = round2(Math.max(0, safeFloat(state.rech_avg, 0) * mult));
@@ -1631,6 +1717,7 @@
     syncControlsFromState();
     persistState();
     renderAttackSection();
+    renderPhaseSection();
     refreshReport();
     runComputePacing();
     setStatus(`Baked ${mult.toFixed(2)}x DPR into boss kit formulas and reset multiplier to 1x.`, 3500);
@@ -1845,6 +1932,85 @@
     return encounterUses > 0 ? encounterUses : Number.POSITIVE_INFINITY;
   }
 
+  function phaseMechanicsPerTargetDpr(pcRow, mode, mechanics, partySize, horizonRounds) {
+    const rounds = Math.max(1, safeFloat(horizonRounds, 1));
+    const pSize = Math.max(1, safeInt(partySize, 1));
+    let total = 0;
+
+    for (const mech of mechanics || []) {
+      if (safeInt(mech.round, 1) > rounds) continue;
+      const targetShare = Math.min(1, Math.max(1, safeInt(mech.targets, 1)) / pSize);
+      total += expectedMechanicDamageVsPc(mech, pcRow, mode) * targetShare / rounds;
+    }
+
+    return total;
+  }
+
+  function expectedMechanicDamageVsPc(mech, pcRow, mode) {
+    const kind = normalizeMechanicType(mech && mech.kind);
+    if (kind === "auto") {
+      return averageDamage(mech.damage_expr);
+    }
+    if (kind === "save") {
+      return expectedSaveHalfDamage(mech.dc, getSaveBonus(pcRow, mech.save_stat), mech.damage_expr);
+    }
+    return expectedAttackDamage(Math.max(1, safeInt(pcRow.AC, 10)), mech.attack_bonus, mech.damage_expr, mode);
+  }
+
+  function mechanicsForRound(mechanics, round) {
+    const r = Math.max(1, safeInt(round, 1));
+    return (mechanics || []).filter((mech) => safeInt(mech.round, 1) === r);
+  }
+
+  function rollMechanicDamageVsPc(mech, pcRow, mode, ac, saveBonuses) {
+    const kind = normalizeMechanicType(mech && mech.kind);
+    if (kind === "auto") {
+      return rollDamageOne(mech.damage_expr);
+    }
+    if (kind === "save") {
+      const bonus = saveBonuses[String(mech.save_stat || "DEX").toUpperCase()] || 0;
+      const roll = randomInt(1, 20);
+      const success = roll === 20 || (roll !== 1 && roll + bonus >= mech.dc);
+      const dmg = rollDamageOne(mech.damage_expr);
+      return success ? 0.5 * dmg : dmg;
+    }
+
+    const r1 = randomInt(1, 20);
+    const r2 = randomInt(1, 20);
+    let roll = r1;
+    if (mode === "adv") roll = Math.max(r1, r2);
+    if (mode === "dis") roll = Math.min(r1, r2);
+    const isCrit = roll === 20;
+    const isHit = isCrit || (roll !== 1 && roll + mech.attack_bonus >= ac);
+    if (!isHit) return 0;
+    return isCrit ? rollDamageCrunchyCritOne(mech.damage_expr) : rollDamageOne(mech.damage_expr);
+  }
+
+  function rollMechanicDamageForTarget(mech, target, currentAc, currentMode, pcSaves, saveIndex) {
+    const kind = normalizeMechanicType(mech && mech.kind);
+    if (kind === "auto") {
+      return rollDamageOne(mech.damage_expr);
+    }
+    if (kind === "save") {
+      const saveIdx = saveIndex[String(mech.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
+      const bonus = pcSaves[target][saveIdx];
+      const roll = randomInt(1, 20);
+      const success = roll === 20 || (roll !== 1 && roll + bonus >= mech.dc);
+      const dmg = rollDamageOne(mech.damage_expr);
+      return success ? 0.5 * dmg : dmg;
+    }
+
+    const r1 = randomInt(1, 20);
+    const r2 = randomInt(1, 20);
+    let r = r1;
+    if (currentMode[target] === "adv") r = Math.max(r1, r2);
+    if (currentMode[target] === "dis") r = Math.min(r1, r2);
+    const isCrit = r === 20;
+    const isHit = isCrit || (r !== 1 && r + mech.attack_bonus >= currentAc[target]);
+    if (!isHit) return 0;
+    return isCrit ? rollDamageCrunchyCritOne(mech.damage_expr) : rollDamageOne(mech.damage_expr);
+  }
+
   function bossDprMultiplier(opts) {
     return clamp(safeFloat(opts && opts.boss_dpr_mult, 1.0), 0, 20);
   }
@@ -1861,6 +2027,28 @@
     const rechargeProb = parseRecharge(opts.recharge_text || "5-6");
     const pHit = Math.min(1, safeFloat(opts.rech_targets, 1) / partySize);
     return rechargeProb * safeFloat(opts.rech_avg, 0) * pHit;
+  }
+
+  function phaseMechanicsEnabledFromTable(tbl) {
+    const out = [];
+    for (const row of tbl || []) {
+      if (!Boolean(row["Enabled?"])) continue;
+
+      const saveStatRaw = String(row.Save || "DEX").toUpperCase();
+      const saveStat = SAVE_KEYS.includes(saveStatRaw) ? saveStatRaw : "DEX";
+
+      out.push({
+        name: String(row.Name || "Mechanic"),
+        round: Math.max(1, safeInt(row.Round, 1)),
+        kind: normalizeMechanicType(row.Type),
+        attack_bonus: safeInt(row["Attack bonus"], 0),
+        dc: safeInt(row.DC, 0),
+        save_stat: saveStat,
+        damage_expr: String(row.Damage || "1d6"),
+        targets: Math.max(1, safeInt(row.Targets, 1)),
+      });
+    }
+    return out;
   }
 
   function attacksEnabledFromTable(tbl) {
@@ -1964,6 +2152,11 @@
   function normalizeNovaMethod(value) {
     const method = String(value || "attack");
     return NOVA_METHODS.includes(method) ? method : "attack";
+  }
+
+  function normalizeMechanicType(value) {
+    const kind = String(value || "auto").toLowerCase();
+    return MECHANIC_TYPES.includes(kind) ? kind : "auto";
   }
 
   function parseRecharge(text) {
@@ -2325,6 +2518,7 @@
 
     base.party_table = (base.party_table || []).map(sanitizePartyRow);
     base.attacks_table = (base.attacks_table || []).map(sanitizeAttackRow);
+    base.phase_table = (base.phase_table || []).map(sanitizePhaseRow);
     base.party_dpr_table = (base.party_dpr_table || []).map(sanitizeDprRow);
     base.party_nova_table = (base.party_nova_table || []).map(sanitizeNovaRow);
 
@@ -2477,6 +2671,20 @@
       "Uses/round": Math.max(0, safeInt(row["Uses/round"], 1)),
       "Uses/encounter": Math.max(0, safeInt(row["Uses/encounter"], 0)),
       "Melee?": Boolean(row["Melee?"]),
+      "Enabled?": Boolean(row["Enabled?"]),
+    };
+  }
+
+  function sanitizePhaseRow(row) {
+    return {
+      Round: Math.max(1, safeInt(row.Round, 1)),
+      Name: String(row.Name || "Mechanic").trim() || "Mechanic",
+      Type: normalizeMechanicType(row.Type),
+      "Attack bonus": safeInt(row["Attack bonus"], 0),
+      DC: safeInt(row.DC, 0),
+      Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
+      Damage: String(row.Damage || "1d6").trim() || "1d6",
+      Targets: Math.max(1, safeInt(row.Targets, 1)),
       "Enabled?": Boolean(row["Enabled?"]),
     };
   }

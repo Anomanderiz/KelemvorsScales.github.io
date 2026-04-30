@@ -434,6 +434,18 @@ main { margin-top: 12px; }
 }
 .card-head .btn { flex-shrink: 0; }
 .card-head .button-row { margin: 0; }
+.card-head.subhead {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.card-head.subhead h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
 .card-action {
   display: flex;
   justify-content: space-between;
