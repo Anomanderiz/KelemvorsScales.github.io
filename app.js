@@ -7,34 +7,32 @@
 
   const DEFAULT_STATE = {
     party_table: [
-      { Name: "Fighter", AC: 18, HP: 40, STR: 4, DEX: 2, CON: 3, INT: 0, WIS: 1, CHA: 0 },
-      { Name: "Rogue", AC: 16, HP: 35, STR: 0, DEX: 5, CON: 2, INT: 1, WIS: 2, CHA: 1 },
-      { Name: "Cleric", AC: 19, HP: 38, STR: 3, DEX: 0, CON: 3, INT: 1, WIS: 4, CHA: 2 },
-      { Name: "Wizard", AC: 13, HP: 30, STR: 0, DEX: 3, CON: 2, INT: 5, WIS: 2, CHA: 1 },
+      { Name: "Fighter", AC: 18, HP: 52, STR: 4, DEX: 2, CON: 3, INT: 0, WIS: 1, CHA: 0 },
+      { Name: "Rogue",   AC: 16, HP: 38, STR: 0, DEX: 5, CON: 2, INT: 1, WIS: 2, CHA: 1 },
+      { Name: "Cleric",  AC: 18, HP: 44, STR: 3, DEX: 0, CON: 3, INT: 1, WIS: 4, CHA: 2 },
+      { Name: "Wizard",  AC: 13, HP: 32, STR: 0, DEX: 3, CON: 2, INT: 5, WIS: 2, CHA: 1 },
     ],
     attacks_table: [
-      { Name: "Bite", Type: "attack", "Attack bonus": 7, DC: 0, Save: "DEX", Damage: "2d10+5", "Uses/round": 1, "Melee?": true, "Enabled?": true },
-      { Name: "Claw", Type: "attack", "Attack bonus": 7, DC: 0, Save: "DEX", Damage: "2d6+5", "Uses/round": 2, "Melee?": true, "Enabled?": true },
-      { Name: "Fire Breath", Type: "save", "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6", "Uses/round": 1, "Melee?": false, "Enabled?": true },
+      { Name: "Bite",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d10+5", "Uses/round": 1, "Melee?": true,  "Enabled?": true },
+      { Name: "Claw",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d6+5",  "Uses/round": 2, "Melee?": true,  "Enabled?": true },
+      { Name: "Fire Breath", Type: "save",   "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6",    "Uses/round": 1, "Melee?": false, "Enabled?": true },
     ],
-    party_dpr_table: [{ Member: "Fighter", DPR: 15.0 }],
-    party_nova_table: [{
-      Member: "Fighter",
-      "Nova DPR": 25.0,
-      Method: "attack",
-      "Atk Bonus": 8,
-      "Roll Mode": "normal",
-      "Target AC": 17,
-      "Crit Ratio": 1.5,
-      "Save DC": 16,
-      "Target Save Bonus": 0,
-      "Save Success Mult": 0.5,
-      Uptime: 0.9,
-    }],
+    party_dpr_table: [
+      { Member: "Fighter", DPR: 18.0 },
+      { Member: "Rogue",   DPR: 22.0 },
+      { Member: "Cleric",  DPR: 12.0 },
+      { Member: "Wizard",  DPR: 24.0 },
+    ],
+    party_nova_table: [
+      { Member: "Fighter", "Nova DPR": 18.0, Method: "attack",    "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
+      { Member: "Rogue",   "Nova DPR": 22.0, Method: "attack",    "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Cleric",  "Nova DPR": 12.0, Method: "attack",    "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
+      { Member: "Wizard",  "Nova DPR": 24.0, Method: "save_half", "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
+    ],
 
     mode_select: "normal",
     spread_targets: 1,
-    thp_expr: "1d6+4",
+    thp_expr: "0",
 
     lair_enabled: false,
     lair_avg: 6.0,
@@ -50,7 +48,7 @@
     rider_duration: 1,
     rider_melee_only: true,
 
-    boss_hp: 150,
+    boss_hp: 200,
     boss_ac: 16,
     resist_factor: 1.0,
     boss_regen: 0.0,
@@ -65,8 +63,10 @@
     dpr_cv: 0.6,
     initiative_mode: "random",
 
-    tune_target_median: 4.0,
+    tune_target_median: 5.0,
     tune_tpk_cap: 0.05,
+
+    pacing_rounds: 5,
   };
 
   const PARTY_COLUMNS = [
@@ -201,6 +201,9 @@
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
       "reportText",
+      "pacingRounds", "btnComputePacing", "btnApplyPacingHp",
+      "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
+      "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
     ];
 
     for (const id of ids) {
@@ -211,12 +214,13 @@
   function bindTabs() {
     const tabButtons = Array.from(document.querySelectorAll(".tab"));
     const panels = {
-      party: document.getElementById("panel-party"),
-      boss: document.getElementById("panel-boss"),
-      det: document.getElementById("panel-det"),
-      ttd: document.getElementById("panel-ttd"),
-      mc: document.getElementById("panel-mc"),
-      enc: document.getElementById("panel-enc"),
+      party:  document.getElementById("panel-party"),
+      boss:   document.getElementById("panel-boss"),
+      det:    document.getElementById("panel-det"),
+      pacing: document.getElementById("panel-pacing"),
+      ttd:    document.getElementById("panel-ttd"),
+      mc:     document.getElementById("panel-mc"),
+      enc:    document.getElementById("panel-enc"),
       report: document.getElementById("panel-report"),
     };
 
@@ -307,16 +311,36 @@
       refreshEffTableFromMode();
     });
 
-    els.btnRunMc.addEventListener("click", () => {
-      runSingleTargetMc();
-    });
-
     els.btnRunEncounter.addEventListener("click", () => {
-      runEncounterAndRender();
+      setBtnLoading(els.btnRunEncounter, true);
+      setTimeout(() => {
+        runEncounterAndRender();
+        setBtnLoading(els.btnRunEncounter, false);
+      }, 0);
     });
 
     els.btnAutoTune.addEventListener("click", () => {
-      autoTuneBossHp();
+      setBtnLoading(els.btnAutoTune, true);
+      setTimeout(() => {
+        autoTuneBossHp();
+        setBtnLoading(els.btnAutoTune, false);
+      }, 0);
+    });
+
+    els.btnRunMc.addEventListener("click", () => {
+      setBtnLoading(els.btnRunMc, true);
+      setTimeout(() => {
+        runSingleTargetMc();
+        setBtnLoading(els.btnRunMc, false);
+      }, 0);
+    });
+
+    els.btnComputePacing.addEventListener("click", () => {
+      runComputePacing();
+    });
+
+    els.btnApplyPacingHp.addEventListener("click", () => {
+      applyPacingHp();
     });
   }
 
@@ -357,8 +381,10 @@
     });
     bindControl("encUseNova", "enc_use_nova", (el) => Boolean(el.checked));
 
-    bindControl("tuneMedian", "tune_target_median", (el) => clamp(safeFloat(el.value, 4.0), 1.0, 20.0));
-    bindControl("tuneTpkCap", "tune_tpk_cap", (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
+    bindControl("tuneMedian",    "tune_target_median", (el) => clamp(safeFloat(el.value, 5.0), 1.0, 20.0));
+    bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
+
+    bindControl("pacingRounds", "pacing_rounds", (el) => Math.max(1, safeInt(el.value, 5)));
   }
 
   function bindControl(id, key, parser, options = {}) {
@@ -425,8 +451,10 @@
     setControlValue(els.encInitiative, state.initiative_mode);
     setControlChecked(els.encUseNova, state.enc_use_nova);
 
-    setControlValue(els.tuneMedian, state.tune_target_median);
-    setControlValue(els.tuneTpkCap, state.tune_tpk_cap);
+    setControlValue(els.tuneMedian,    state.tune_target_median);
+    setControlValue(els.tuneTpkCap,    state.tune_tpk_cap);
+
+    setControlValue(els.pacingRounds, state.pacing_rounds);
   }
 
   function renderPartySection() {
@@ -796,19 +824,19 @@
   }
 
   function runEncounterAndRender() {
-    setStatus("Running encounter simulation...", 0);
+    setStatus("Running encounter simulation…", 0);
     const metrics = runEncounterMc();
     if (metrics.error) {
       alert(metrics.error);
       setStatus("Encounter simulation failed.", 2600);
-      return;
+      return null;
     }
 
     const finite = metrics.finiteTtk;
     if (!finite.length) {
       alert("Boss never died within max rounds. Increase max rounds or lower boss durability.");
       setStatus("Encounter simulation returned no boss defeats.", 2600);
-      return;
+      return metrics;
     }
 
     const p10 = percentile(finite, 10);
@@ -871,6 +899,7 @@
     });
 
     setStatus(`Encounter simulation complete. Trials=${state.enc_trials}.`, 3800);
+    return metrics;
   }
 
   function autoTuneBossHp() {
@@ -968,17 +997,16 @@
     persistState();
     refreshReport();
 
-    runEncounterAndRender();
-
-    const finalMetrics = runEncounterMc();
-    if (!finalMetrics.error && finalMetrics.finiteTtk.length) {
+    // Single render pass — reuse the metrics it returns to avoid a second simulation
+    const finalMetrics = runEncounterAndRender();
+    if (finalMetrics && !finalMetrics.error && finalMetrics.finiteTtk.length) {
       const finalMed = percentile(finalMetrics.finiteTtk, 50);
       const finalTpk = finalMetrics.tpkProb;
 
       if (finalTpk > tpkCap + 1e-9) {
-        alert(`Auto-tuned HP=${tunedHp}, median~${finalMed.toFixed(2)}, but TPK=${(100 * finalTpk).toFixed(1)}% is above cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
+        alert(`Auto-tuned HP=${tunedHp}, median~${finalMed.toFixed(2)}, but TPK=${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
       } else if (capAdjusted) {
-        alert(`Auto-tune applied TPK cap and set HP=${tunedHp}. Median~${finalMed.toFixed(2)} rounds, TPK ${(100 * finalTpk).toFixed(1)}%.`);
+        alert(`Auto-tune applied TPK cap → HP=${tunedHp}. Median ${finalMed.toFixed(2)} rounds, TPK ${(100 * finalTpk).toFixed(1)}%.`);
       }
 
       setStatus(`Auto-tune complete. Boss HP set to ${tunedHp}.`, 4200);
@@ -1339,6 +1367,208 @@
     }
     return out;
   }
+
+  // ── Pacing Calculator ─────────────────────────────────────────────────────
+
+  let _lastPacingResult = null;
+
+  function computePacingResult() {
+    const targetRounds = Math.max(1, safeInt(state.pacing_rounds, 5));
+
+    // Effective party DPR on the boss
+    const useNova = Boolean(state.enc_use_nova);
+    const effList = effPartyDprs(useNova);
+    const totalPartyDpr = effList.reduce((acc, r) => acc + safeFloat(r[1], 0), 0);
+    const resistFactor = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
+    const bossRegen = Math.max(0, safeFloat(state.boss_regen, 0.0));
+    const effectivePartyDprOnBoss = Math.max(0, totalPartyDpr / resistFactor - bossRegen);
+
+    // Recommended boss HP = effectivePartyDPR × targetRounds
+    const recommendedBossHp = effectivePartyDprOnBoss > 0
+      ? Math.max(1, Math.round(effectivePartyDprOnBoss * targetRounds))
+      : 0;
+
+    // Per-PC TTD at current boss DPR
+    const attacks = attacksEnabledFromTable(state.attacks_table);
+    const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
+    const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
+    const spread = Math.max(1, safeInt(state.spread_targets, 1));
+    const lairDpr = lairPerTargetDpr(state, party.length || 1);
+    const rechDpr = rechargePerTargetDpr(state, party.length || 1);
+    const additiveDpr = lairDpr + rechDpr;
+
+    let firstDownRound = Infinity;
+    let lastDownRound = 0;
+    let targetAttackDpr = 0;
+    let toughestPcName = null;
+    const pcRows = [];
+
+    for (const pc of party) {
+      const pcHp = Math.max(1, safeInt(pc.HP, 1));
+      const attackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks);
+      const totalDprPerPc = attackDpr / spread + additiveDpr;
+      const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
+      const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
+
+      if (Number.isFinite(pcTtd)) {
+        firstDownRound = Math.min(firstDownRound, pcTtd);
+        lastDownRound = Math.max(lastDownRound, pcTtd);
+      }
+
+      // Target boss attack DPR so THIS PC dies at exactly targetRounds.
+      // (neededNetDpr + thpAvg - additiveDpr) × spread = neededTotalAttackDpr
+      const neededNetDpr = pcHp / targetRounds;
+      const neededAttackDpr = Math.max(0, (neededNetDpr + thpAvg - additiveDpr) * spread);
+      if (neededAttackDpr > targetAttackDpr) {
+        targetAttackDpr = neededAttackDpr;
+        toughestPcName = pc.Name || "?";
+      }
+
+      pcRows.push({
+        PC: pc.Name || "?",
+        HP: pcHp,
+        AC: safeInt(pc.AC, 10),
+        "Atk DPR/target": round2(attackDpr / spread),
+        "Additive DPR": round2(additiveDpr),
+        "Net DPR": round2(netDprPerPc),
+        "TTD (exact)": Number.isFinite(pcTtd) ? pcTtd.toFixed(1) : "∞",
+        "TTD (rounds)": Number.isFinite(pcTtd) ? String(Math.ceil(pcTtd)) : "∞",
+      });
+    }
+
+    return {
+      targetRounds,
+      recommendedBossHp,
+      effectivePartyDprOnBoss,
+      firstDownRound: Number.isFinite(firstDownRound) ? firstDownRound : null,
+      lastDownRound: lastDownRound > 0 ? lastDownRound : null,
+      targetAttackDpr: round2(targetAttackDpr),
+      toughestPcName,
+      currentBossHp: safeFloat(state.boss_hp, 200),
+      pcRows,
+      additiveDpr,
+      thpAvg,
+    };
+  }
+
+  function runComputePacing() {
+    const result = computePacingResult();
+    _lastPacingResult = result;
+    renderPacingResult(result);
+    if (els.btnApplyPacingHp) {
+      els.btnApplyPacingHp.disabled = result.recommendedBossHp <= 0;
+    }
+    setStatus("Pacing computed.", 2000);
+  }
+
+  function applyPacingHp() {
+    if (!_lastPacingResult || _lastPacingResult.recommendedBossHp <= 0) return;
+    state.boss_hp = _lastPacingResult.recommendedBossHp;
+    syncControlsFromState();
+    persistState();
+    refreshEffTableFromMode();
+    refreshReport();
+    runComputePacing();
+    setStatus(`Boss HP set to ${state.boss_hp}.`, 2500);
+  }
+
+  function renderPacingResult(r) {
+    // Metric values
+    setText(els.pacingBossHp, r.recommendedBossHp > 0 ? String(r.recommendedBossHp) : "N/A");
+    setText(els.pacingBossHpSub, `party eff. DPR ${r.effectivePartyDprOnBoss.toFixed(1)} × ${r.targetRounds} rounds`);
+
+    if (r.firstDownRound != null) {
+      const fd = Math.ceil(r.firstDownRound);
+      setText(els.pacingFirstDown, String(fd));
+      applyMetricClass(els.pacingFirstDown, fd < r.targetRounds ? "danger" : fd > r.targetRounds * 1.5 ? "success" : "");
+    } else {
+      setText(els.pacingFirstDown, "∞");
+      applyMetricClass(els.pacingFirstDown, "success");
+    }
+
+    if (r.lastDownRound != null) {
+      const ld = Math.ceil(r.lastDownRound);
+      setText(els.pacingPartyWipe, String(ld));
+      applyMetricClass(els.pacingPartyWipe, ld < r.targetRounds ? "danger" : ld > r.targetRounds * 2 ? "success" : "warning");
+    } else {
+      setText(els.pacingPartyWipe, "∞");
+      applyMetricClass(els.pacingPartyWipe, "success");
+    }
+
+    setText(els.pacingTargetDpr, String(r.targetAttackDpr));
+    const currentDprHint = r.toughestPcName ? `to kill ${r.toughestPcName} in ${r.targetRounds}R` : "no PCs";
+    setText(els.pacingTargetDprSub, currentDprHint);
+
+    // Balance analysis
+    renderPacingBalance(r);
+
+    // Per-PC table
+    renderResultTable(els.pacingTable, r.pcRows);
+  }
+
+  function renderPacingBalance(r) {
+    if (!els.pacingBalance) return;
+    const el = els.pacingBalance;
+    const N = r.targetRounds;
+    const bossHp = r.currentBossHp;
+    const recHp = r.recommendedBossHp;
+    const partyWipe = r.lastDownRound;
+    const firstDown = r.firstDownRound;
+
+    let cls = "bal-ok";
+    let badge = "";
+    let analysis = "";
+
+    if (r.effectivePartyDprOnBoss <= 0) {
+      cls = "bal-hard";
+      badge = `<span class="pacing-badge badge-hard">Cannot Kill Boss</span>`;
+      analysis = "Party effective DPR on the boss is zero — check resistance factor, regen, and party DPR settings.";
+    } else if (partyWipe != null && partyWipe < N * 0.7) {
+      cls = "bal-hard";
+      badge = `<span class="pacing-badge badge-hard">Very Hard</span>`;
+      analysis = `Party wipes at round ${fmt1(partyWipe)} — well before the target ${N} rounds. ` +
+        `Reduce boss DPR or raise party sustain. Target attack DPR of ${r.targetAttackDpr} would make the last PC fall at round ${N}.`;
+    } else if (partyWipe != null && partyWipe < N) {
+      cls = "bal-warn";
+      badge = `<span class="pacing-badge badge-warn">Hard</span>`;
+      analysis = `Party wipes at round ${fmt1(partyWipe)} — slightly before target. ` +
+        `Reduce boss attack DPR to ~${r.targetAttackDpr} for the toughest PC (${r.toughestPcName}) to last the full ${N} rounds.`;
+    } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > N * 2.5) {
+      cls = "bal-easy";
+      badge = `<span class="pacing-badge badge-easy">Very Easy</span>`;
+      analysis = `Boss dies in ${N} rounds and the party takes minimal casualties. ` +
+        `To add tension, increase boss attack DPR to ${r.targetAttackDpr} (making the last PC fall at round ${N}).`;
+    } else if (partyWipe != null && partyWipe < N * 1.4) {
+      cls = "bal-ok";
+      badge = `<span class="pacing-badge badge-ok">Balanced</span>`;
+      analysis = `Boss dies in ${N} rounds; party starts falling at round ${fmt1(firstDown)} and last PC at ${fmt1(partyWipe)}. ` +
+        `Recommended boss HP: ${recHp} (current: ${Math.round(bossHp)}).`;
+    } else {
+      cls = "bal-easy";
+      badge = `<span class="pacing-badge badge-easy">Easy</span>`;
+      analysis = `Party survives well past the target encounter length. Consider increasing boss DPR or HP. ` +
+        `Target attack DPR: ${r.targetAttackDpr} for a ${N}-round party wipe.`;
+    }
+
+    el.className = `pacing-balance ${cls}`;
+    el.innerHTML = `${badge} ${analysis}`;
+  }
+
+  function fmt1(n) {
+    return n == null ? "∞" : Number.isFinite(n) ? n.toFixed(1) : "∞";
+  }
+
+  function setText(el, text) {
+    if (el) el.textContent = text;
+  }
+
+  function applyMetricClass(el, cls) {
+    if (!el) return;
+    el.classList.remove("danger", "warning", "success");
+    if (cls) el.classList.add(cls);
+  }
+
+  // ── End Pacing Calculator ─────────────────────────────────────────────────
 
   function buildNovaEffRows() {
     let total = 0;
@@ -1875,8 +2105,10 @@
       ? String(base.initiative_mode)
       : "random";
 
-    base.tune_target_median = clamp(safeFloat(base.tune_target_median, 4.0), 1.0, 20.0);
+    base.tune_target_median = clamp(safeFloat(base.tune_target_median, 5.0), 1.0, 20.0);
     base.tune_tpk_cap = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
+
+    base.pacing_rounds = Math.max(1, safeInt(base.pacing_rounds, 5));
 
     syncPartyDependentRows(base);
     return base;
@@ -2080,6 +2312,12 @@
   function setControlChecked(el, checked) {
     if (!el) return;
     el.checked = Boolean(checked);
+  }
+
+  function setBtnLoading(el, isLoading) {
+    if (!el) return;
+    el.disabled = isLoading;
+    el.classList.toggle("loading", isLoading);
   }
 
   function mergeDeep(base, override) {

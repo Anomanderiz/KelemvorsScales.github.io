@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kelemvor's Scales - Web</title>
+  <title>Kelemvor's Scales — D&D 2024 Encounter Balancer</title>
+  <meta name="description" content="Monte Carlo encounter balancer and boss auto-tuner for D&D 2024.">
   <link rel="icon" type="image/x-icon" href="assets/icon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13,136 +14,154 @@
   <script defer src="app.js"></script>
 </head>
 <body>
-  <div class="bg-orb orb-a"></div>
-  <div class="bg-orb orb-b"></div>
-  <div class="bg-grid"></div>
+  <div class="bg-orb orb-a" aria-hidden="true"></div>
+  <div class="bg-orb orb-b" aria-hidden="true"></div>
+  <div class="bg-grid"      aria-hidden="true"></div>
 
   <div class="app-shell">
+
+    <!-- ── Header ── -->
     <header class="hero">
       <div class="brand">
         <img src="assets/icon.ico" alt="Kelemvor icon" class="brand-icon">
         <div>
           <h1>Kelemvor's Scales</h1>
-          <p>Encounter Monte Carlo + Auto-Tune, now browser-native for GitHub Pages.</p>
+          <p>D&D 2024 Encounter Balancer — Monte Carlo + Auto-Tune</p>
         </div>
       </div>
       <div class="hero-actions">
-        <button id="btnSaveLocal" class="btn">Save Local</button>
-        <button id="btnExportJson" class="btn">Export JSON</button>
-        <label class="btn btn-file">
+        <button id="btnSaveLocal"  class="btn" title="Save state to browser localStorage">Save Local</button>
+        <button id="btnExportJson" class="btn" title="Export current profile as JSON">Export JSON</button>
+        <label  class="btn btn-file" title="Import a previously exported JSON profile">
           Import JSON
-          <input id="inputImportJson" type="file" accept=".json,application/json">
+          <input id="inputImportJson" type="file" accept=".json,application/json" aria-label="Import JSON profile">
         </label>
       </div>
     </header>
 
-    <nav class="tabbar" aria-label="Application Sections">
-      <button class="tab active" data-tab="party">Party & DPR</button>
-      <button class="tab" data-tab="boss">Boss Kit</button>
-      <button class="tab" data-tab="det">Deterministic DPR</button>
-      <button class="tab" data-tab="ttd">Boss TTD</button>
-      <button class="tab" data-tab="mc">Boss->PC MC</button>
-      <button class="tab" data-tab="enc">Encounter MC</button>
-      <button class="tab" data-tab="report">Report</button>
+    <!-- ── Tab navigation ── -->
+    <nav class="tabbar" aria-label="Application sections">
+      <button class="tab active" data-tab="party">Party &amp; DPR</button>
+      <button class="tab"        data-tab="boss">Boss Kit</button>
+      <button class="tab"        data-tab="det">Det. DPR</button>
+      <button class="tab"        data-tab="pacing">Pacing</button>
+      <button class="tab"        data-tab="ttd">Boss TTD</button>
+      <button class="tab"        data-tab="mc">Boss→PC MC</button>
+      <button class="tab"        data-tab="enc">Encounter MC</button>
+      <button class="tab"        data-tab="report">Report</button>
     </nav>
 
     <main>
+
+      <!-- ══════════════════════════════════════════════════════
+           PARTY & DPR
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-party" class="panel active">
         <div class="card">
           <div class="card-head">
             <h2>Party Composition</h2>
-            <button id="btnAddPartyRow" class="btn btn-accent">Add PC</button>
+            <button id="btnAddPartyRow" class="btn btn-accent">+ Add PC</button>
           </div>
+          <p class="hint">Define each party member's name, AC, HP, and saving-throw modifiers.</p>
           <div id="partyTable" class="table-mount"></div>
         </div>
+
         <div class="split">
           <div class="card">
-            <h2>DPR Input (Single Entry)</h2>
-            <p class="hint">Enter per-PC DPR once (all-hits baseline). Conversion settings use this to estimate effective DPR.</p>
+            <h2>DPR Input</h2>
+            <p class="hint">Per-PC all-hits baseline DPR. Nova conversion uses this as the raw input.</p>
             <div id="dprTable" class="table-mount"></div>
           </div>
           <div class="card">
-            <h2>Nova Conversion Settings</h2>
-            <p class="hint">Configure each PC as attack-roll, save-based, or auto-hit delivery. Nova DPR and Target AC stay derived.</p>
+            <h2>Nova Conversion</h2>
+            <p class="hint">Configure delivery method (attack / save / auto-hit), roll mode, and uptime to convert raw DPR to effective DPR vs the boss.</p>
             <div id="novaTable" class="table-mount"></div>
           </div>
         </div>
       </section>
 
+      <!-- ══════════════════════════════════════════════════════
+           BOSS KIT
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-boss" class="panel">
         <div class="card">
           <div class="card-head">
             <h2>Boss Attacks</h2>
-            <button id="btnAddAttackRow" class="btn btn-accent">Add Attack</button>
+            <button id="btnAddAttackRow" class="btn btn-accent">+ Add Attack</button>
           </div>
           <div id="attacksTable" class="table-mount"></div>
         </div>
-        <div class="card">
-          <h2>Shared Combat Controls</h2>
-          <div class="form-grid">
-            <label>Boss Roll Mode
-              <select id="optModeSelect">
-                <option value="normal">normal</option>
-                <option value="adv">adv</option>
-                <option value="dis">dis</option>
-              </select>
-            </label>
-            <label>Spread Attacks Across
-              <input id="optSpreadTargets" type="number" min="1" max="20" step="1">
-            </label>
-            <label>Per-Target THP per Round
-              <input id="optThpExpr" type="text">
-            </label>
-            <label>Boss HP
-              <input id="optBossHp" type="number" min="1" max="99999" step="1">
-            </label>
-            <label>Boss AC
-              <input id="optBossAc" type="number" min="1" max="40" step="1">
-            </label>
-            <label>Resistance Factor
-              <input id="optResistFactor" type="number" min="0.01" max="9" step="0.01">
-            </label>
-            <label>Regen per Round
-              <input id="optBossRegen" type="number" min="0" max="9999" step="0.1">
-            </label>
+
+        <div class="split">
+          <div class="card">
+            <h2>Combat Controls</h2>
+            <div class="form-grid">
+              <label>Boss Roll Mode
+                <select id="optModeSelect">
+                  <option value="normal">Normal</option>
+                  <option value="adv">Advantage</option>
+                  <option value="dis">Disadvantage</option>
+                </select>
+              </label>
+              <label>Spread Attacks Across (PCs)
+                <input id="optSpreadTargets" type="number" min="1" max="20" step="1">
+              </label>
+              <label>Per-Target THP / Round
+                <input id="optThpExpr" type="text" placeholder="e.g. 1d6+4">
+              </label>
+              <label>Boss HP
+                <input id="optBossHp" type="number" min="1" max="99999" step="1">
+              </label>
+              <label>Boss AC
+                <input id="optBossAc" type="number" min="1" max="40" step="1">
+              </label>
+              <label>Resistance Factor
+                <input id="optResistFactor" type="number" min="0.01" max="9" step="0.01">
+              </label>
+              <label>Regen / Round
+                <input id="optBossRegen" type="number" min="0" max="9999" step="0.1">
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Lair &amp; Recharge</h2>
+            <div class="form-grid">
+              <label class="checkbox"><input id="optLairEnabled" type="checkbox"> Lair Action</label>
+              <label>Lair Avg Damage
+                <input id="optLairAvg" type="number" min="0" max="9999" step="0.1">
+              </label>
+              <label>Lair Targets
+                <input id="optLairTargets" type="number" min="1" max="99" step="1">
+              </label>
+              <label>Lair Every N Rounds
+                <input id="optLairEveryN" type="number" min="1" max="99" step="1">
+              </label>
+              <label class="checkbox"><input id="optRechEnabled" type="checkbox"> Recharge Power</label>
+              <label>Recharge Text
+                <input id="optRechargeText" type="text" placeholder="5-6">
+              </label>
+              <label>Recharge Avg Damage
+                <input id="optRechAvg" type="number" min="0" max="9999" step="0.1">
+              </label>
+              <label>Recharge Targets
+                <input id="optRechTargets" type="number" min="1" max="99" step="1">
+              </label>
+            </div>
           </div>
         </div>
-        <div class="card">
-          <h2>Lair and Recharge</h2>
-          <div class="form-grid">
-            <label class="checkbox"><input id="optLairEnabled" type="checkbox"> Lair Action Enabled</label>
-            <label>Lair Avg Damage
-              <input id="optLairAvg" type="number" min="0" max="9999" step="0.1">
-            </label>
-            <label>Lair Targets
-              <input id="optLairTargets" type="number" min="1" max="99" step="1">
-            </label>
-            <label>Lair Every N Rounds
-              <input id="optLairEveryN" type="number" min="1" max="99" step="1">
-            </label>
-            <label class="checkbox"><input id="optRechEnabled" type="checkbox"> Recharge Power Enabled</label>
-            <label>Recharge Text
-              <input id="optRechargeText" type="text" placeholder="5-6">
-            </label>
-            <label>Recharge Avg Damage
-              <input id="optRechAvg" type="number" min="0" max="9999" step="0.1">
-            </label>
-            <label>Recharge Targets
-              <input id="optRechTargets" type="number" min="1" max="99" step="1">
-            </label>
-          </div>
-        </div>
+
         <div class="card">
           <h2>On-Hit Rider</h2>
           <div class="form-grid">
             <label>Rider Mode
               <select id="optRiderMode">
-                <option value="none">none</option>
-                <option value="grant advantage on melee next round">grant advantage on melee next round</option>
-                <option value="-2 AC next round">-2 AC next round</option>
+                <option value="none">None</option>
+                <option value="grant advantage on melee next round">Grant advantage on melee next round</option>
+                <option value="-2 AC next round">−2 AC next round</option>
               </select>
             </label>
-            <label>Rider Duration
+            <label>Rider Duration (rounds)
               <input id="optRiderDuration" type="number" min="1" max="10" step="1">
             </label>
             <label class="checkbox"><input id="optRiderMeleeOnly" type="checkbox"> Melee Only</label>
@@ -150,33 +169,102 @@
         </div>
       </section>
 
+      <!-- ══════════════════════════════════════════════════════
+           DETERMINISTIC DPR
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-det" class="panel">
         <div class="card card-action">
           <h2>Deterministic DPR Snapshot</h2>
-          <button id="btnComputeDet" class="btn btn-accent">Compute Deterministic DPR</button>
+          <button id="btnComputeDet" class="btn btn-accent">Compute</button>
         </div>
         <div class="card">
           <div id="detTable" class="table-mount"></div>
         </div>
         <div class="card">
           <div class="chart-wrap">
-            <canvas id="detChart"></canvas>
+            <canvas id="detChart" aria-label="Rounds to zero chart"></canvas>
           </div>
         </div>
       </section>
 
+      <!-- ══════════════════════════════════════════════════════
+           PACING CALCULATOR  (new)
+           ══════════════════════════════════════════════════════ -->
+      <section id="panel-pacing" class="panel">
+        <div class="card">
+          <div class="card-head">
+            <h2>Encounter Pacing Calculator</h2>
+          </div>
+          <p class="hint">
+            Set a target encounter length. The calculator recommends boss HP for the boss to die
+            in that many rounds, shows how long the party survives at current boss DPR, and tells
+            you what boss attack DPR is needed so the last PC falls exactly at round N.
+          </p>
+          <div class="form-grid">
+            <label>Target Encounter Rounds
+              <input id="pacingRounds" type="number" min="1" max="30" step="1" value="5">
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="btnComputePacing"  class="btn btn-accent">Compute Pacing</button>
+            <button id="btnApplyPacingHp"  class="btn btn-success" disabled>Apply Recommended HP</button>
+          </div>
+        </div>
+
+        <!-- Metric cards -->
+        <div class="pacing-metrics">
+          <div class="card metric-card">
+            <div class="metric-label">Recommended Boss HP</div>
+            <div class="metric-value" id="pacingBossHp">—</div>
+            <div class="metric-sub"   id="pacingBossHpSub">for boss to die in N rounds</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">First PC Falls</div>
+            <div class="metric-value" id="pacingFirstDown">—</div>
+            <div class="metric-sub">round (at current boss DPR)</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Party Wipe</div>
+            <div class="metric-value" id="pacingPartyWipe">—</div>
+            <div class="metric-sub">round (at current boss DPR)</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Target Boss Attack DPR</div>
+            <div class="metric-value" id="pacingTargetDpr">—</div>
+            <div class="metric-sub"   id="pacingTargetDprSub">to wipe party in N rounds</div>
+          </div>
+        </div>
+
+        <!-- Balance analysis -->
+        <div class="card">
+          <h3>Balance Analysis</h3>
+          <div id="pacingBalance" class="pacing-balance">
+            Click <strong>Compute Pacing</strong> to see the balance analysis.
+          </div>
+        </div>
+
+        <!-- Per-PC breakdown -->
+        <div class="card">
+          <h3>Per-PC Time-to-Die (at current boss DPR)</h3>
+          <div id="pacingTable" class="table-mount"></div>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           BOSS TTD
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-ttd" class="panel">
         <div class="card">
           <h2>Boss Time to Die</h2>
           <div class="radio-row">
-            <label><input id="ttdModeManual" type="radio" name="ttdMode" value="manual"> Use DPR As Entered (already effective)</label>
-            <label><input id="ttdModeNova" type="radio" name="ttdMode" value="nova" checked> Convert DPR Baseline To Effective</label>
+            <label><input id="ttdModeManual" type="radio" name="ttdMode" value="manual"> Use DPR as entered</label>
+            <label><input id="ttdModeNova"   type="radio" name="ttdMode" value="nova" checked> Convert to effective DPR</label>
             <button id="btnComputeTtd" class="btn btn-accent">Refresh</button>
           </div>
-          <div class="stats-grid">
-            <div id="lblIncoming" class="stat"></div>
+          <div class="stats-grid" id="ttdStats">
+            <div id="lblIncoming"    class="stat"></div>
             <div id="lblRoundsExact" class="stat"></div>
-            <div id="lblRoundsCeil" class="stat"></div>
+            <div id="lblRoundsCeil"  class="stat"></div>
           </div>
         </div>
         <div class="card">
@@ -184,12 +272,15 @@
         </div>
       </section>
 
+      <!-- ══════════════════════════════════════════════════════
+           BOSS → PC MC
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-mc" class="panel">
         <div class="card">
-          <h2>Boss -> Single PC Monte Carlo</h2>
+          <h2>Boss → Single PC Monte Carlo</h2>
           <div class="form-grid">
             <label>Target PC
-              <select id="mcTarget"></select>
+              <select id="mcTarget" aria-label="Select target party member"></select>
             </label>
             <label>Rounds
               <input id="mcRounds" type="number" min="1" max="50" step="1">
@@ -199,85 +290,98 @@
             </label>
             <label class="checkbox"><input id="mcShowHist" type="checkbox"> Show Histogram</label>
           </div>
-          <button id="btnRunMc" class="btn btn-accent">Run MC</button>
+          <div class="button-row">
+            <button id="btnRunMc" class="btn btn-accent">Run MC</button>
+          </div>
           <div class="stats-grid">
             <div id="lblMcMean" class="stat"></div>
-            <div id="lblMcP95" class="stat"></div>
-            <div id="lblMcP99" class="stat"></div>
+            <div id="lblMcP95"  class="stat"></div>
+            <div id="lblMcP99"  class="stat"></div>
           </div>
         </div>
         <div class="card">
           <div class="chart-wrap">
-            <canvas id="mcChart"></canvas>
+            <canvas id="mcChart" aria-label="Damage distribution histogram"></canvas>
           </div>
         </div>
       </section>
 
+      <!-- ══════════════════════════════════════════════════════
+           ENCOUNTER MC
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-enc" class="panel">
         <div class="card">
-          <h2>Encounter Simulation Controls</h2>
+          <h2>Encounter Simulation</h2>
           <div class="form-grid">
             <label>Trials
-              <input id="encTrials" type="number" min="1000" max="300000" step="1000">
+              <input id="encTrials"    type="number" min="1000" max="300000" step="1000">
             </label>
             <label>Max Rounds
-              <input id="encMaxRounds" type="number" min="1" max="50" step="1">
+              <input id="encMaxRounds" type="number" min="1"    max="50"     step="1">
             </label>
             <label>Party DPR CV
-              <input id="encDprCv" type="number" min="0.05" max="2" step="0.01">
+              <input id="encDprCv"     type="number" min="0.05" max="2"      step="0.01">
             </label>
             <label>Initiative
               <select id="encInitiative">
-                <option value="random">random</option>
-                <option value="party_first">party_first</option>
-                <option value="boss_first">boss_first</option>
+                <option value="random">Random</option>
+                <option value="party_first">Party First</option>
+                <option value="boss_first">Boss First</option>
               </select>
             </label>
-            <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR Baseline -> Effective</label>
+            <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR → Effective</label>
           </div>
+
           <h3>Auto-Tune</h3>
           <div class="form-grid">
-            <label>Target Median TTK
-              <input id="tuneMedian" type="number" min="1" max="20" step="0.1">
+            <label>Target Median TTK (rounds)
+              <input id="tuneMedian"  type="number" min="1" max="20" step="0.1">
             </label>
-            <label>TPK Cap
-              <input id="tuneTpkCap" type="number" min="0" max="1" step="0.001">
+            <label>TPK Cap (0–1)
+              <input id="tuneTpkCap" type="number" min="0" max="1"  step="0.001">
             </label>
           </div>
+
           <div class="button-row">
-            <button id="btnRunEncounter" class="btn btn-accent">Run Encounter Simulation</button>
-            <button id="btnAutoTune" class="btn">Auto-Tune HP</button>
+            <button id="btnRunEncounter" class="btn btn-accent">Run Encounter</button>
+            <button id="btnAutoTune"     class="btn">Auto-Tune HP</button>
           </div>
           <div class="stats-grid">
             <div id="lblTtkMedian" class="stat"></div>
-            <div id="lblTtkP1090" class="stat"></div>
-            <div id="lblTpk" class="stat"></div>
-            <div id="lblDowns" class="stat"></div>
+            <div id="lblTtkP1090"  class="stat"></div>
+            <div id="lblTpk"       class="stat"></div>
+            <div id="lblDowns"     class="stat"></div>
           </div>
         </div>
+
         <div class="split split-charts">
           <div class="card">
             <div class="chart-wrap">
-              <canvas id="survChart"></canvas>
+              <canvas id="survChart" aria-label="Boss survival curve"></canvas>
             </div>
           </div>
           <div class="card">
             <div class="chart-wrap">
-              <canvas id="ttkChart"></canvas>
+              <canvas id="ttkChart" aria-label="Time-to-kill distribution"></canvas>
             </div>
           </div>
         </div>
       </section>
 
+      <!-- ══════════════════════════════════════════════════════
+           REPORT
+           ══════════════════════════════════════════════════════ -->
       <section id="panel-report" class="panel">
         <div class="card">
           <h2>State Report</h2>
-          <textarea id="reportText" readonly></textarea>
+          <p class="hint">Full JSON snapshot of current state — copy for manual backup or inspection.</p>
+          <textarea id="reportText" readonly aria-label="JSON state report"></textarea>
         </div>
       </section>
+
     </main>
 
-    <footer class="statusbar" id="statusBar">Ready.</footer>
+    <footer class="statusbar" id="statusBar" aria-live="polite">Ready.</footer>
   </div>
 </body>
 </html>
