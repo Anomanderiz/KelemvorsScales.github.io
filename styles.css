@@ -143,29 +143,29 @@ body {
   content: '';
   position: absolute;
   left: 0; right: 0;
-  top: -80%; height: 180%;
+  top: -35%; height: 150%;
   background-image:
-    radial-gradient(circle, rgba(255,88,44,.96) 0%, rgba(191,26,47,.68) 1.9px, transparent 3px),
-    radial-gradient(circle, rgba(255,184,64,.70) 0%, transparent 2.2px);
-  background-size: 88px 62px, 142px 96px;
-  background-position: 0 0, 44px 24px;
-  animation: embers-rise 28s linear infinite, ember-pulse 4.8s ease-in-out infinite alternate;
-  opacity: .68;
-  filter: drop-shadow(0 0 5px rgba(191,26,47,.55));
+    radial-gradient(circle, rgba(255,160,72,.72) 0%, rgba(210,70,32,.32) 1.6px, transparent 3.2px),
+    radial-gradient(circle, rgba(255,214,126,.52) 0%, transparent 1.5px);
+  background-size: 240px 180px, 360px 260px;
+  background-position: 34px 40px, 160px 110px;
+  animation: embers-drift-a 36s linear infinite, ember-glow 7s ease-in-out infinite alternate;
+  opacity: .36;
+  filter: drop-shadow(0 0 5px rgba(224,90,36,.42));
 }
 .bg-embers::after {
   content: '';
   position: absolute;
   left: 0; right: 0;
-  top: -80%; height: 180%;
+  top: -35%; height: 150%;
   background-image:
-    radial-gradient(circle, rgba(255,214,120,.92) 0%, rgba(200,100,20,.58) 1.6px, transparent 2.8px),
-    radial-gradient(ellipse, rgba(255,72,40,.55) 0%, transparent 58%);
-  background-size: 130px 88px, 210px 150px;
-  background-position: 44px 30px, 12px 70px;
-  animation: embers-rise 44s linear infinite reverse, ember-drift 9s ease-in-out infinite alternate;
-  opacity: .46;
-  filter: drop-shadow(0 0 7px rgba(224,176,56,.35));
+    radial-gradient(circle, rgba(230,64,36,.58) 0%, rgba(190,26,47,.28) 1.5px, transparent 3px),
+    radial-gradient(circle, rgba(255,188,72,.44) 0%, transparent 1.3px);
+  background-size: 320px 230px, 470px 340px;
+  background-position: 110px 70px, 48px 210px;
+  animation: embers-drift-b 52s linear infinite;
+  opacity: .26;
+  filter: drop-shadow(0 0 6px rgba(191,26,47,.32));
 }
 /* Third spark layer — tiny bright crimson specks at higher density */
 .bg-sparks {
@@ -176,119 +176,42 @@ body {
   content: '';
   position: absolute;
   left: 0; right: 0;
-  top: -80%; height: 180%;
+  top: -35%; height: 150%;
   background-image:
-    radial-gradient(circle, rgba(255,112,64,.96) 0%, transparent 1.8px),
-    radial-gradient(circle, rgba(255,230,160,.76) 0%, transparent 1.2px);
-  background-size: 56px 40px, 94px 68px;
-  background-position: 20px 18px, 64px 12px;
-  animation: embers-rise 20s linear infinite, spark-twinkle 1.9s steps(2, end) infinite;
-  opacity: .45;
-  filter: drop-shadow(0 0 6px rgba(255,80,40,.62));
+    radial-gradient(circle, rgba(255,226,154,.68) 0%, transparent 1.2px),
+    radial-gradient(circle, rgba(255,92,44,.52) 0%, transparent 1.5px);
+  background-size: 420px 300px, 520px 390px;
+  background-position: 24px 84px, 220px 190px;
+  animation: sparks-drift 64s linear infinite, spark-twinkle 6s ease-in-out infinite alternate;
+  opacity: .22;
+  filter: drop-shadow(0 0 5px rgba(255,120,56,.42));
 }
-.bg-sparks::after {
-  content: '';
-  position: absolute;
-  left: -10%; right: -10%;
-  top: -80%; height: 180%;
-  background-image:
-    radial-gradient(ellipse at center, rgba(255,72,42,.68) 0%, rgba(255,72,42,.30) 28%, transparent 62%);
-  background-size: 180px 14px;
-  background-position: 0 0;
-  animation: ember-streaks 16s linear infinite;
-  opacity: .20;
-  transform: rotate(-12deg);
+@keyframes embers-drift-a {
+  from { transform: translate3d(-5vw, 9vh, 0); }
+  to   { transform: translate3d(12vw, -11vh, 0); }
 }
-@keyframes embers-rise {
-  from { transform: translateY(0); }
-  to   { transform: translateY(44.4%); }
+@keyframes embers-drift-b {
+  from { transform: translate3d(8vw, 7vh, 0); }
+  to   { transform: translate3d(-10vw, -9vh, 0); }
 }
-@keyframes ember-pulse {
-  from { opacity: .50; }
-  to   { opacity: .78; }
+@keyframes sparks-drift {
+  from { transform: translate3d(-8vw, 6vh, 0); }
+  to   { transform: translate3d(10vw, -8vh, 0); }
 }
-@keyframes ember-drift {
-  from { background-position: 36px 28px, 0 66px; }
-  to   { background-position: 58px 34px, 28px 74px; }
+@keyframes ember-glow {
+  from { opacity: .24; }
+  to   { opacity: .40; }
 }
 @keyframes spark-twinkle {
-  0%, 100% { opacity: .30; }
-  50%      { opacity: .58; }
-}
-@keyframes ember-streaks {
-  from { background-position: -220px 0; transform: translateY(-4%) rotate(-12deg); }
-  to   { background-position: 760px 320px; transform: translateY(48%) rotate(-12deg); }
-}
-
-/* ── Dragon sweep animation ── */
-.dragon-wrap {
-  --dragon-opacity: .58;
-  position: fixed;
-  top: clamp(72px, 16vh, 170px);
-  left: 0;
-  z-index: 2;
-  pointer-events: none;
-  width: min(520px, 72vw);
-  opacity: var(--dragon-opacity);
-  mix-blend-mode: screen;
-  animation: dragon-fly 30s linear infinite;
-  animation-delay: -2.2s;
-}
-.dragon-svg {
-  width: 100%;
-  height: auto;
-  filter:
-    drop-shadow(0 0 10px rgba(191,26,47,.95))
-    drop-shadow(0 0 26px rgba(191,26,47,.60))
-    drop-shadow(0 0 52px rgba(191,26,47,.30));
-  animation: dragon-flap 0.50s ease-in-out infinite alternate;
-}
-.dragon-svg .fire {
-  animation: fire-flicker 0.20s ease-in-out infinite alternate;
-  transform-box: fill-box;
-  transform-origin: left center;
-}
-@keyframes dragon-fly {
-  /* sits off-screen left while waiting */
-  0%     { transform: translate(-122%, 6px) scale(.86); opacity: 0; }
-  1%     { opacity: var(--dragon-opacity); }
-  /* 4.8 s sweep across */
-  16%    { transform: translate(122vw, -22px) scale(1.04); opacity: var(--dragon-opacity); }
-  /* invisible snap back */
-  16.01% { transform: translate(-122%, 6px) scale(.86); opacity: 0; }
-  100%   { transform: translate(-122%, 6px) scale(.86); opacity: 0; }
-}
-@keyframes dragon-flap {
-  from { transform: translateY(0px)  rotate( 0.0deg); }
-  to   { transform: translateY(-10px) rotate(-1.8deg); }
-}
-@keyframes fire-flicker {
-  from { transform: scaleX(1.00) scaleY(1.00); opacity: 1.00; }
-  to   { transform: scaleX(1.20) scaleY(0.82); opacity: 0.78; }
-}
-
-/* Subtle grid overlay */
-.bg-grid {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  opacity: .10;
-  background-image:
-    linear-gradient(to right,  rgba(191,26,47,.12) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(191,26,47,.08) 1px, transparent 1px);
-  background-size: 44px 44px;
-  animation: grid-breathe 10s ease-in-out infinite alternate;
-}
-@keyframes grid-breathe {
-  from { opacity: .08; }
-  to   { opacity: .14; }
+  from { opacity: .14; }
+  to   { opacity: .26; }
 }
 
 /* ── Respect prefers-reduced-motion ── */
 @media (prefers-reduced-motion: reduce) {
   .orb-a, .orb-b, .orb-c,
   .bg-embers::before, .bg-embers::after,
-  .bg-sparks::before, .bg-sparks::after,
-  .bg-grid { animation: none; }
-  .dragon-wrap { display: none; }
+  .bg-sparks::before { animation: none; }
 }
 
 /* ================================================================
@@ -892,7 +815,6 @@ td select {
   .hero           { flex-direction: column; align-items: stretch; }
   .brand p        { white-space: normal; }
   .hero-actions   { justify-content: flex-start; }
-  .dragon-wrap    { --dragon-opacity: .34; width: 360px; }
   .tab            { font-size: .80rem; padding: 6px 10px; }
   .metric-value   { font-size: 1.4rem; }
   .pacing-metrics { grid-template-columns: 1fr 1fr; }
