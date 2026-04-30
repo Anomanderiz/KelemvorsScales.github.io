@@ -186,20 +186,43 @@ body {
 /* Soft scan and node glows layered over the grid */
 .bg-grid-scan {
   mix-blend-mode: screen;
-  opacity: .42;
+  opacity: .34;
+  z-index: 2;
 }
 .bg-grid-scan::before {
   content: '';
   position: absolute;
-  left: -20%;
-  right: -20%;
-  top: -18%;
-  height: 28%;
+  left: -12vw;
+  right: -12vw;
+  top: 0;
+  height: clamp(86px, 14vh, 132px);
   background:
-    linear-gradient(to bottom, transparent, rgba(255,48,76,.18), transparent),
-    linear-gradient(100deg, transparent 12%, rgba(255,92,112,.28), transparent 72%);
-  filter: blur(10px);
-  animation: holo-scan 9s ease-in-out infinite;
+    linear-gradient(
+      to bottom,
+      transparent 0%,
+      transparent 38%,
+      rgba(255,43,72,.08) 46%,
+      rgba(255,205,215,.78) 49%,
+      rgba(255,43,72,.92) 50%,
+      rgba(255,43,72,.22) 54%,
+      rgba(255,43,72,.05) 62%,
+      transparent 100%
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 34px,
+      rgba(255,84,105,.20) 34px 35px,
+      transparent 35px 72px
+    ),
+    linear-gradient(105deg, transparent 24%, rgba(255,120,136,.18) 50%, transparent 76%);
+  border-bottom: 1px solid rgba(255,43,72,.46);
+  box-shadow:
+    0 0 18px rgba(255,43,72,.26),
+    0 0 42px rgba(191,26,47,.18);
+  filter: blur(.4px);
+  opacity: 0;
+  animation: holo-scan 9s cubic-bezier(.42,0,.18,1) infinite;
+  animation-delay: -2.8s;
 }
 .bg-grid-scan::after {
   content: '';
@@ -227,10 +250,11 @@ body {
   to   { opacity: .72; }
 }
 @keyframes holo-scan {
-  0%   { transform: translateY(-22vh); opacity: 0; }
-  18%  { opacity: .75; }
-  52%  { opacity: .34; }
-  100% { transform: translateY(122vh); opacity: 0; }
+  0%   { transform: translate3d(0,-18vh,0) skewY(-2deg); opacity: 0; }
+  10%  { opacity: .72; }
+  42%  { opacity: .50; }
+  68%  { opacity: .78; }
+  100% { transform: translate3d(0,112vh,0) skewY(-2deg); opacity: 0; }
 }
 @keyframes holo-nodes {
   from { opacity: .18; transform: translateY(0); }
