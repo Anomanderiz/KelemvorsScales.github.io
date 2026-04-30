@@ -186,8 +186,7 @@ body {
 /* Soft scan and node glows layered over the grid */
 .bg-grid-scan {
   mix-blend-mode: screen;
-  opacity: .34;
-  z-index: 2;
+  opacity: .58;
 }
 .bg-grid-scan::before {
   content: '';
