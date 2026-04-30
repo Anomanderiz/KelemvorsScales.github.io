@@ -249,11 +249,11 @@ body {
   to   { opacity: .72; }
 }
 @keyframes holo-scan {
-  0%   { transform: translate3d(0,-18vh,0) skewY(-2deg); opacity: 0; }
+  0%   { transform: translate3d(0,-18vh,0); opacity: 0; }
   10%  { opacity: .72; }
   42%  { opacity: .50; }
   68%  { opacity: .78; }
-  100% { transform: translate3d(0,112vh,0) skewY(-2deg); opacity: 0; }
+  100% { transform: translate3d(0,112vh,0); opacity: 0; }
 }
 @keyframes holo-nodes {
   from { opacity: .18; transform: translateY(0); }
