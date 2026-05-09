@@ -69,6 +69,7 @@
 
     tune_target_median: 5.0,
     tune_tpk_cap: 0.05,
+    tune_kill_rate: 0.75,
 
     pacing_rounds: 5,
 
@@ -229,7 +230,8 @@
       "mcTarget", "mcRounds", "mcTrials", "mcShowHist", "btnRunMc", "mcChart",
       "lblMcMean", "lblMcP95", "lblMcP99",
       "encTrials", "encMaxRounds", "encDprCv", "encInitiative", "encUseNova",
-      "tuneMedian", "tuneTpkCap", "btnRunEncounter", "btnAutoTune",
+      "tuneMedian", "tuneTpkCap", "tuneKillRate",
+      "btnRunEncounter", "btnAutoTune", "btnAutoTuneAll",
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
       "reportText",
@@ -392,6 +394,10 @@
       runButtonAction(els.btnAutoTune, autoTuneBossHp, "Monte Carlo tuning failed.");
     });
 
+    els.btnAutoTuneAll.addEventListener("click", () => {
+      runButtonAction(els.btnAutoTuneAll, autoTuneAll, "Encounter tuning failed.");
+    });
+
     els.btnRunMc.addEventListener("click", () => {
       runButtonAction(els.btnRunMc, runSingleTargetMc, "Single-target Monte Carlo failed.");
     });
@@ -481,6 +487,7 @@
 
     bindControl("tuneMedian",    "tune_target_median", (el) => clamp(safeFloat(el.value, 5.0), 1.0, 20.0));
     bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
+    bindControl("tuneKillRate",  "tune_kill_rate",     (el) => clamp(safeFloat(el.value, 0.75), 0.50, 0.95));
 
     bindControl("pacingRounds", "pacing_rounds", (el) => {
       const rounds = Math.max(1, safeInt(el.value, 5));
@@ -598,6 +605,7 @@
 
     setControlValue(els.tuneMedian,    state.tune_target_median);
     setControlValue(els.tuneTpkCap,    state.tune_tpk_cap);
+    setControlValue(els.tuneKillRate,  state.tune_kill_rate);
 
     setControlValue(els.pacingRounds, state.pacing_rounds);
 
@@ -1109,125 +1117,234 @@
   }
 
   function autoTuneBossHp() {
-    setStatus("Auto-tuning boss HP...", 0);
+    setStatus("Auto-tuning boss HP…", 0);
 
-    const target = Math.max(1, safeFloat(state.pacing_rounds, state.tune_target_median || 4.0));
-    state.tune_target_median = target;
-    if (state.enc_max_rounds < target) {
-      state.enc_max_rounds = Math.ceil(target);
-    }
-    const tpkCap = safeFloat(state.tune_tpk_cap, 0.05);
-    const originalHp = safeFloat(state.boss_hp, 150);
+    const targetRound    = Math.max(1, safeInt(state.pacing_rounds, 5));
+    const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
+    const tpkCap         = safeFloat(state.tune_tpk_cap, 0.05);
     const originalTrials = safeInt(state.enc_trials, 10000);
-    // Proxy for runs where boss never died — must be >> any valid TTK.
-    const maxR = Math.max(1, safeInt(state.enc_max_rounds, 12));
-    const INF_PROXY = (maxR + 1) * 10000;
+    const quickTrials    = Math.max(3000, Math.floor(originalTrials * 0.4));
 
-    const unconditionalMedian = (metrics) => {
-      if (metrics.error) return Number.POSITIVE_INFINITY;
-      const allTtk = metrics.ttk.map(v => (Number.isFinite(v) ? v : INF_PROXY));
-      return percentile(allTtk, 50);
-    };
-
-    const simulateWithHp = (hp, trials) => {
+    // Returns fraction of all trials where boss is killed by targetRound.
+    const simulateKillRate = (hp, trials) => {
       const metrics = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
-      return { med: unconditionalMedian(metrics), tpk: metrics.error ? 1.0 : metrics.tpkProb, metrics };
+      if (metrics.error) return { killRate: 0, tpk: 1.0, metrics: null };
+      const kr = metrics.ttk.filter(v => Number.isFinite(v) && v <= targetRound).length / metrics.ttk.length;
+      return { killRate: kr, tpk: metrics.tpkProb, metrics };
     };
 
-    const quickTrials = Math.max(3000, Math.floor(originalTrials * 0.4));
-    let low = 1.0;
-    let high = Math.max(10.0, originalHp);
+    let low  = 1.0;
+    let high = Math.max(10.0, safeFloat(state.boss_hp, 150));
 
-    const medLow = simulateWithHp(low, quickTrials).med;
-    let medHigh = simulateWithHp(high, quickTrials).med;
-
-    let attempts = 0;
-    while (medHigh < target && attempts < 12) {
-      high *= 2;
-      medHigh = simulateWithHp(high, quickTrials).med;
-      attempts += 1;
-    }
-
-    if (!(medLow <= target && target <= medHigh)) {
-      alert("Could not bracket target median TTK by HP alone. Try adjusting boss or party parameters.");
-      setStatus("Auto-tune could not bracket target.", 3200);
+    // Check that kill rate is achievable at all (HP=1 must succeed).
+    if (simulateKillRate(low, quickTrials).killRate < killRateTarget) {
+      alert(`Cannot reach ${(killRateTarget * 100).toFixed(0)}% kill rate even at HP 1 — check boss DPR and party configuration.`);
+      setStatus("Auto-tune HP: kill rate not achievable.", 3200);
       return;
     }
 
-    for (let i = 0; i < 16; i += 1) {
-      const mid = 0.5 * (low + high);
-      const midRes = simulateWithHp(mid, quickTrials);
-      if (midRes.med >= target) {
-        high = mid;
-      } else {
-        low = mid;
-      }
-      if (Math.abs(midRes.med - target) < 0.05) {
-        break;
-      }
+    // Expand high bracket until kill rate drops below target.
+    let attempts = 0;
+    while (simulateKillRate(high, quickTrials).killRate >= killRateTarget && attempts < 12) {
+      high *= 2;
+      attempts++;
     }
 
-    let tunedHp = Math.max(1, Math.round(high));
+    // Binary search: find highest HP where killRate ≥ killRateTarget.
+    for (let i = 0; i < 20; i++) {
+      const mid = (low + high) / 2;
+      if (simulateKillRate(mid, quickTrials).killRate >= killRateTarget) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+      if (Math.abs(low - high) < 1.0) break;
+    }
 
-    const quickAtTuned = simulateWithHp(tunedHp, quickTrials);
+    let tunedHp    = Math.max(1, Math.round(low));
     let capAdjusted = false;
 
-    if (quickAtTuned.tpk > tpkCap + 1e-9) {
-      const atMin = simulateWithHp(1, quickTrials);
+    // TPK cap: if tuned HP causes too-high TPK, binary-search for the highest HP within cap.
+    const atTuned = simulateKillRate(tunedHp, quickTrials);
+    if (atTuned.tpk > tpkCap + 1e-9) {
+      const atMin = simulateKillRate(1, quickTrials);
       if (atMin.tpk <= tpkCap + 1e-9) {
-        let capLow = 1;
-        let capHigh = tunedHp;
+        let capLow = 1, capHigh = tunedHp;
         while (capLow < capHigh) {
           const midHp = Math.floor((capLow + capHigh + 1) / 2);
-          const mid = simulateWithHp(midHp, quickTrials);
-          if (mid.tpk <= tpkCap + 1e-9) {
+          if (simulateKillRate(midHp, quickTrials).tpk <= tpkCap + 1e-9) {
             capLow = midHp;
           } else {
             capHigh = midHp - 1;
           }
         }
-
-        let bestHp = capLow;
-        let bestErr = Number.POSITIVE_INFINITY;
-        for (let hp = Math.max(1, capLow - 5); hp <= capLow; hp += 1) {
-          const candidate = simulateWithHp(hp, quickTrials);
-          if (candidate.tpk <= tpkCap + 1e-9) {
-            const err = Math.abs(candidate.med - target);
-            if (err < bestErr) {
-              bestErr = err;
-              bestHp = hp;
-            }
-          }
-        }
-        tunedHp = bestHp;
+        tunedHp     = capLow;
         capAdjusted = true;
       }
     }
 
-    state.boss_hp = tunedHp;
+    state.boss_hp    = tunedHp;
     state.enc_trials = originalTrials;
     syncControlsFromState();
     persistState();
     refreshReport();
 
-    // Single render pass — reuse the metrics it returns to avoid a second simulation
     const finalMetrics = runEncounterAndRender();
     if (finalMetrics && !finalMetrics.error) {
-      const finalMed = unconditionalMedian(finalMetrics);
-      const finalKillPct = (100 * finalMetrics.finiteTtk.length / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
-      const finalTpk = finalMetrics.tpkProb;
+      const finiteTtk  = finalMetrics.ttk.filter(v => Number.isFinite(v));
+      const finalMed   = finiteTtk.length ? percentile(finiteTtk, 50).toFixed(2) : "N/A";
+      const finalKr    = (100 * finiteTtk.filter(v => v <= targetRound).length / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
+      const finalTpk   = finalMetrics.tpkProb;
 
       if (finalTpk > tpkCap + 1e-9) {
-        alert(`Auto-tuned HP=${tunedHp}, p50 TTK~${finalMed.toFixed(2)}R (${finalKillPct}% kills), but TPK=${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
+        alert(`Auto-tuned HP=${tunedHp}, kill rate ${finalKr}% by round ${targetRound}, but TPK=${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
       } else if (capAdjusted) {
-        alert(`Auto-tune applied TPK cap → HP=${tunedHp}. p50 TTK ${finalMed.toFixed(2)}R (${finalKillPct}% kills), TPK ${(100 * finalTpk).toFixed(1)}%.`);
+        alert(`TPK cap applied → HP=${tunedHp}. Kill rate ${finalKr}% by R${targetRound}, median TTK ${finalMed}R, TPK ${(100 * finalTpk).toFixed(1)}%.`);
       }
+      setStatus(`Auto-tune complete. Boss HP → ${tunedHp}.`, 4200);
+      return;
+    }
+    setStatus("Auto-tune completed with partial results.", 4200);
+  }
 
-      setStatus(`Auto-tune complete. Boss HP set to ${tunedHp}.`, 4200);
+  function autoTuneAll() {
+    setStatus("Auto-tuning encounter… Stage 1: boss DPR.", 0);
+
+    const targetRound    = Math.max(1, safeInt(state.pacing_rounds, 5));
+    const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
+    const tpkCap         = safeFloat(state.tune_tpk_cap, 0.05);
+    const originalTrials = safeInt(state.enc_trials, 10000);
+    const quickTrials    = Math.max(3000, Math.floor(originalTrials * 0.4));
+    const changes        = [];
+
+    // ── Stage 1: Boss DPR multiplier from pacing ───────────────────────────
+    const pacingResult = computePacingResult();
+    if (Number.isFinite(pacingResult.targetBossDprMult) && pacingResult.targetBossDprMult > 0) {
+      const newMult = clamp(round2(pacingResult.targetBossDprMult), 0, 20);
+      if (Math.abs(newMult - state.boss_dpr_mult) > 0.01) {
+        changes.push(`Boss DPR mult: ${state.boss_dpr_mult.toFixed(2)}x → ${newMult.toFixed(2)}x`);
+        state.boss_dpr_mult = newMult;
+      }
+    }
+
+    // ── Stage 2: Minion HP for reliable clearing (replenishing packs only) ─
+    const minionCount = Math.max(0, safeInt(state.minion_count, 0));
+    if (minionCount > 0 && Boolean(state.minion_replenish)) {
+      // partyDprVsMinions is recomputed after updating boss_dpr_mult (doesn't matter —
+      // minionHitRatio depends only on AC values, not DPR mult, so no change needed).
+      const mph = pacingResult.minionPhaseInfo;
+      if (mph && mph.partyDprVsMinions > 0) {
+        const cv      = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
+        // Pool HP s.t. P(Gamma(μ=partyDprVsMinions, cv) ≥ poolHP) = killRateTarget
+        const poolHp  = mph.partyDprVsMinions * Math.max(0.05, 1 + invNorm01(1 - killRateTarget) * cv);
+        const newHp   = Math.max(1, Math.round(poolHp / minionCount));
+        if (newHp !== Math.round(state.minion_hp)) {
+          changes.push(`Minion HP: ${Math.round(state.minion_hp)} → ${newHp} (${(killRateTarget * 100).toFixed(0)}% clear rate)`);
+          state.minion_hp = newHp;
+        }
+      }
+    }
+
+    // ── Stage 3: Boss HP — binary search for kill rate = killRateTarget ────
+    setStatus("Auto-tuning encounter… Stage 3: boss HP.", 0);
+
+    const simulateKillRate = (hp, trials) => {
+      const metrics = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
+      if (metrics.error) return { killRate: 0, tpk: 1.0, metrics: null };
+      const kr = metrics.ttk.filter(v => Number.isFinite(v) && v <= targetRound).length / metrics.ttk.length;
+      return { killRate: kr, tpk: metrics.tpkProb, metrics };
+    };
+
+    const oldBossHp = safeFloat(state.boss_hp, 150);
+    let low  = 1.0;
+    let high = Math.max(10.0, oldBossHp);
+
+    if (simulateKillRate(low, quickTrials).killRate < killRateTarget) {
+      // Even HP=1 can't hit target — report what we have so far but abort HP tune.
+      state.enc_trials = originalTrials;
+      syncControlsFromState();
+      persistState();
+      refreshReport();
+      runEncounterAndRender();
+      const partialMsg = changes.length ? `Applied:\n${changes.join("\n")}\n\n` : "";
+      alert(`${partialMsg}Cannot reach ${(killRateTarget * 100).toFixed(0)}% kill rate by round ${targetRound} even at HP 1.\nCheck boss DPR or party configuration.`);
+      setStatus("Auto-tune: HP stage failed — check boss DPR.", 4000);
       return;
     }
 
-    setStatus("Auto-tune completed with partial results.", 4200);
+    let attempts = 0;
+    while (simulateKillRate(high, quickTrials).killRate >= killRateTarget && attempts < 12) {
+      high *= 2;
+      attempts++;
+    }
+
+    for (let i = 0; i < 20; i++) {
+      const mid = (low + high) / 2;
+      if (simulateKillRate(mid, quickTrials).killRate >= killRateTarget) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+      if (Math.abs(low - high) < 1.0) break;
+    }
+
+    let tunedHp     = Math.max(1, Math.round(low));
+    let capAdjusted  = false;
+
+    // TPK cap: if too lethal, pull HP down until TPK is within cap.
+    const atTuned = simulateKillRate(tunedHp, quickTrials);
+    if (atTuned.tpk > tpkCap + 1e-9 && simulateKillRate(1, quickTrials).tpk <= tpkCap + 1e-9) {
+      let capLow = 1, capHigh = tunedHp;
+      while (capLow < capHigh) {
+        const midHp = Math.floor((capLow + capHigh + 1) / 2);
+        if (simulateKillRate(midHp, quickTrials).tpk <= tpkCap + 1e-9) {
+          capLow = midHp;
+        } else {
+          capHigh = midHp - 1;
+        }
+      }
+      tunedHp     = capLow;
+      capAdjusted  = true;
+    }
+
+    if (Math.abs(tunedHp - Math.round(oldBossHp)) > 0) {
+      changes.push(`Boss HP: ${Math.round(oldBossHp)} → ${tunedHp}`);
+    }
+    state.boss_hp    = tunedHp;
+    state.enc_trials = originalTrials;
+    syncControlsFromState();
+    persistState();
+    refreshReport();
+
+    // ── Stage 4: Final render + summary ────────────────────────────────────
+    const finalMetrics = runEncounterAndRender();
+    if (finalMetrics && !finalMetrics.error) {
+      const finiteTtk = finalMetrics.ttk.filter(v => Number.isFinite(v));
+      const finalMed  = finiteTtk.length ? percentile(finiteTtk, 50).toFixed(2) : "N/A";
+      const finalKr   = (100 * finiteTtk.filter(v => v <= targetRound).length / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
+      const finalTpk  = finalMetrics.tpkProb;
+
+      if (changes.length === 0) {
+        setStatus("Auto-tune: parameters already optimal.", 3500);
+        return;
+      }
+
+      const tpkLine = finalTpk > tpkCap + 1e-9
+        ? `\n⚠ TPK ${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}% — reduce boss DPR.`
+        : `\nTPK: ${(100 * finalTpk).toFixed(1)}% ✓`;
+      const capLine = capAdjusted ? "\n(Boss HP capped to keep TPK within limit.)" : "";
+
+      alert(
+        `Auto-tune complete — ${changes.length} change(s):\n` +
+        changes.map(c => `  • ${c}`).join("\n") +
+        `\n\nKill rate by round ${targetRound}: ${finalKr}%` +
+        `\nMedian TTK (kills): ${finalMed}R` +
+        tpkLine + capLine
+      );
+      setStatus(`Auto-tune complete. ${changes.length} parameter(s) updated.`, 5000);
+    } else {
+      setStatus("Auto-tune completed with partial results.", 4200);
+    }
   }
 
   function runMcSim(pcRow, attacks, opts) {
@@ -2464,6 +2581,17 @@
     return [nonCritHits / 400, crits / 400, (nonCritHits + crits) / 400];
   }
 
+  // Inverse standard-normal CDF (rational approximation, A&S 26.2.17).
+  // Valid for p in (0, 1); sufficient precision for p in [0.05, 0.95].
+  function invNorm01(p) {
+    const safe = Math.max(1e-9, Math.min(1 - 1e-9, p));
+    const q    = safe <= 0.5 ? safe : 1 - safe;
+    const t    = Math.sqrt(-2 * Math.log(q));
+    const z    = t - (2.515517 + 0.802853 * t + 0.010328 * t * t)
+                   / (1 + 1.432788 * t + 0.189269 * t * t + 0.001308 * t * t * t);
+    return safe <= 0.5 ? -z : z;
+  }
+
   function pSaveFail(dc, saveBonus) {
     const target = dc - saveBonus;
     if (target <= 1) return 1 / 20;
@@ -2907,7 +3035,8 @@
       : "random";
 
     base.tune_target_median = clamp(safeFloat(base.tune_target_median, 5.0), 1.0, 20.0);
-    base.tune_tpk_cap = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
+    base.tune_tpk_cap  = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
+    base.tune_kill_rate = clamp(safeFloat(base.tune_kill_rate, 0.75), 0.50, 0.95);
 
     base.pacing_rounds = Math.max(1, safeInt(base.pacing_rounds, 5));
 
