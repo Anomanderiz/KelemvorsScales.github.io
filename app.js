@@ -71,6 +71,11 @@
     tune_tpk_cap: 0.05,
 
     pacing_rounds: 5,
+
+    minion_count: 0,
+    minion_ac: 14,
+    minion_hp: 15,
+    minion_avg_dpr: 0,
   };
 
   const PARTY_COLUMNS = [
@@ -222,6 +227,8 @@
       "pacingRounds", "btnComputePacing", "btnApplyPacingHp", "btnApplyPacingDpr", "btnApplyBossKitMult",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
+      "optMinionCount", "optMinionAc", "optMinionHp", "optMinionAvgDpr",
+      "minionTtdCard", "minionTtdTable",
     ];
 
     for (const id of ids) {
@@ -469,6 +476,11 @@
       state.tune_target_median = rounds;
       return rounds;
     });
+
+    bindControl("optMinionCount",   "minion_count",   (el) => Math.max(0, safeInt(el.value, 0)),    { refreshEff: true });
+    bindControl("optMinionAc",      "minion_ac",      (el) => Math.max(1, safeInt(el.value, 14)),   { refreshEff: true });
+    bindControl("optMinionHp",      "minion_hp",      (el) => Math.max(1, safeFloat(el.value, 15)), { refreshEff: true });
+    bindControl("optMinionAvgDpr",  "minion_avg_dpr", (el) => Math.max(0, safeFloat(el.value, 0)));
   }
 
   function runButtonAction(button, action, failureMessage) {
@@ -570,6 +582,11 @@
     setControlValue(els.tuneTpkCap,    state.tune_tpk_cap);
 
     setControlValue(els.pacingRounds, state.pacing_rounds);
+
+    setControlValue(els.optMinionCount,  state.minion_count);
+    setControlValue(els.optMinionAc,     state.minion_ac);
+    setControlValue(els.optMinionHp,     state.minion_hp);
+    setControlValue(els.optMinionAvgDpr, state.minion_avg_dpr);
   }
 
   function renderPartySection() {
@@ -812,15 +829,30 @@
   }
 
   function updateTtdLabels(totalDpr) {
-    const resist = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
-    const regen = Math.max(0, safeFloat(state.boss_regen, 0.0));
+    const resist    = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
+    const regen     = Math.max(0, safeFloat(state.boss_regen, 0.0));
+    // effective = how much boss HP the party removes per round (after resist/regen).
     const effective = Math.max(0, totalDpr / resist - regen);
-    const hp = Math.max(1, safeFloat(state.boss_hp, 150));
-    const exact = effective > 0 ? hp / effective : Number.POSITIVE_INFINITY;
+    const hp        = Math.max(1, safeFloat(state.boss_hp, 150));
 
-    els.lblIncoming.textContent = `Effective Incoming DPR: ${effective.toFixed(2)}`;
+    // Minion phase: pass raw totalDpr — resist/regen are boss properties, not minion properties.
+    // computeMinionPhase applies resist/regen only to boss-overflow damage.
+    const minionPhase = computeMinionPhase(totalDpr);
+    renderMinionTtdTable(minionPhase);
+
+    let exact;
+    if (minionPhase) {
+      // Rounds party spends killing minions (with overflow hitting boss) + pure boss phase.
+      const remainingBossHp = minionPhase.bossHpAfterMinionPhase;
+      const bossPhaseRounds = effective > 0 ? remainingBossHp / effective : Number.POSITIVE_INFINITY;
+      exact = minionPhase.minionPhaseRounds + bossPhaseRounds;
+    } else {
+      exact = effective > 0 ? hp / effective : Number.POSITIVE_INFINITY;
+    }
+
+    els.lblIncoming.textContent    = `Effective Party DPR: ${effective.toFixed(2)}`;
     els.lblRoundsExact.textContent = `Exact Rounds to Zero: ${Number.isFinite(exact) ? exact.toFixed(2) : "inf"}`;
-    els.lblRoundsCeil.textContent = `Boss Defeated In: ${Number.isFinite(exact) ? String(Math.ceil(exact)) : "inf"} rounds`;
+    els.lblRoundsCeil.textContent  = `Boss Defeated In: ${Number.isFinite(exact) ? String(Math.ceil(exact)) : "inf"} rounds${minionPhase ? ` (incl. ${minionPhase.minionPhaseRounds}R minion phase)` : ""}`;
   }
 
   function computeDeterministic() {
@@ -828,7 +860,7 @@
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const dprMult = bossDprMultiplier(state);
-    const rawAdditiveDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
+    const rawAdditiveDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1) + minionAdditiveDprPerPc(party.length || 1);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const horizonRounds = Math.max(1, safeInt(state.pacing_rounds || state.enc_max_rounds, 1));
@@ -1301,6 +1333,20 @@
 
     const bossFirstFlags = buildBossFirstFlags(trials, initMode);
 
+    // ── Minion pack setup ──────────────────────────────────────────────────
+    const mcMinionCount   = Math.max(0, safeInt(opts.minion_count, 0));
+    const mcMinionHpEach  = Math.max(1, safeFloat(opts.minion_hp, 15));
+    const mcMinionAc      = Math.max(1, safeInt(opts.minion_ac, 14));
+    const mcMinionDprEach = Math.max(0, safeFloat(opts.minion_avg_dpr, 0));
+    const mcHasMinionPack = mcMinionCount > 0;
+    const mcMinionHitRatio = mcHasMinionPack
+      ? minionHitRatio(mcMinionAc, Math.max(1, safeInt(opts.boss_ac, 16)))
+      : 1;
+    const mcMinionPoolHp = mcHasMinionPack
+      ? new Array(trials).fill(mcMinionCount * mcMinionHpEach)
+      : null;
+    // ──────────────────────────────────────────────────────────────────────
+
     for (let rnd = 1; rnd <= maxRounds; rnd += 1) {
       let anyOngoing = false;
       for (let t = 0; t < trials; t += 1) {
@@ -1315,14 +1361,25 @@
         if (Number.isFinite(ttk[t])) continue;
         if (bossFirstFlags[t]) continue;
 
-        let dmgParty = 0;
+        let rawPartyDpr = 0;
         for (let j = 0; j < P; j += 1) {
           if (!pcsAlive[t][j]) continue;
-          dmgParty += gammaRng(effMeans[j], dprCv);
+          rawPartyDpr += gammaRng(effMeans[j], dprCv);
         }
-        dmgParty = Math.max(0, dmgParty / resist - regen);
 
-        bossHp[t] -= dmgParty;
+        if (mcHasMinionPack && mcMinionPoolHp[t] > 0) {
+          const dprToMinions = rawPartyDpr * mcMinionHitRatio;
+          const prevHp       = mcMinionPoolHp[t];
+          mcMinionPoolHp[t]  = Math.max(0, prevHp - dprToMinions);
+          if (mcMinionPoolHp[t] === 0 && dprToMinions > prevHp) {
+            const overflowFrac  = (dprToMinions - prevHp) / dprToMinions;
+            const overflowBoss  = Math.max(0, rawPartyDpr * overflowFrac / resist - regen);
+            bossHp[t] -= overflowBoss;
+          }
+        } else {
+          bossHp[t] -= Math.max(0, rawPartyDpr / resist - regen);
+        }
+
         if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
           ttk[t] = rnd;
           pcsDownAtVictory[t] = pcsAlive[t].reduce((acc, alive) => acc + (alive ? 0 : 1), 0);
@@ -1459,6 +1516,19 @@
           }
         }
 
+        // Minion pack attacks: living minions deal damage split across alive PCs.
+        if (mcHasMinionPack && mcMinionDprEach > 0 && mcMinionPoolHp[t] > 0) {
+          aliveNow = aliveIndicesForTrial(pcsAlive[t]);
+          if (aliveNow.length) {
+            const minionsLeft      = Math.ceil(mcMinionPoolHp[t] / mcMinionHpEach);
+            const totalMinionDpr   = minionsLeft * mcMinionDprEach;
+            const perPcMinionDmg   = totalMinionDpr / aliveNow.length;
+            for (const idx of aliveNow) {
+              applyDamage(idx, Math.max(0, perPcMinionDmg * dprMult));
+            }
+          }
+        }
+
         for (let j = 0; j < P; j += 1) {
           riderRem[t][j] = Math.max(0, riderRem[t][j] - 1);
           if (riderTrig[j]) {
@@ -1475,14 +1545,25 @@
         if (Number.isFinite(ttk[t])) continue;
         if (!bossFirstFlags[t]) continue;
 
-        let dmgParty = 0;
+        let rawPartyDpr = 0;
         for (let j = 0; j < P; j += 1) {
           if (!pcsAlive[t][j]) continue;
-          dmgParty += gammaRng(effMeans[j], dprCv);
+          rawPartyDpr += gammaRng(effMeans[j], dprCv);
         }
-        dmgParty = Math.max(0, dmgParty / resist - regen);
 
-        bossHp[t] -= dmgParty;
+        if (mcHasMinionPack && mcMinionPoolHp[t] > 0) {
+          const dprToMinions = rawPartyDpr * mcMinionHitRatio;
+          const prevHp       = mcMinionPoolHp[t];
+          mcMinionPoolHp[t]  = Math.max(0, prevHp - dprToMinions);
+          if (mcMinionPoolHp[t] === 0 && dprToMinions > prevHp) {
+            const overflowFrac = (dprToMinions - prevHp) / dprToMinions;
+            const overflowBoss = Math.max(0, rawPartyDpr * overflowFrac / resist - regen);
+            bossHp[t] -= overflowBoss;
+          }
+        } else {
+          bossHp[t] -= Math.max(0, rawPartyDpr / resist - regen);
+        }
+
         if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
           ttk[t] = rnd;
           pcsDownAtVictory[t] = pcsAlive[t].reduce((acc, alive) => acc + (alive ? 0 : 1), 0);
@@ -1558,7 +1639,8 @@
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const lairDpr = lairPerTargetDpr(state, party.length || 1);
     const rechDpr = rechargePerTargetDpr(state, party.length || 1);
-    const rawAdditiveDpr = lairDpr + rechDpr;
+    const minionDpr = minionAdditiveDprPerPc(party.length || 1);
+    const rawAdditiveDpr = lairDpr + rechDpr + minionDpr;
     const dprMult = bossDprMultiplier(state);
     const additiveDpr = rawAdditiveDpr * dprMult;
 
@@ -1827,6 +1909,96 @@
   }
 
   // ── End Pacing Calculator ─────────────────────────────────────────────────
+
+  // ── Minion helpers ────────────────────────────────────────────────────────
+
+  // Scale factor for party effective DPR when attacking minion AC vs boss AC.
+  // Uses the average attack bonus from the nova table as a proxy.
+  function minionHitRatio(minionAc, bossAc) {
+    const rows = state.party_nova_table;
+    const avgAtk = rows.length
+      ? rows.reduce((acc, r) => acc + safeInt(r["Atk Bonus"], 7), 0) / rows.length
+      : 7;
+    const pHitMinion = clamp((21 + avgAtk - Math.max(1, minionAc)) / 20, 0.05, 0.95);
+    const pHitBoss   = clamp((21 + avgAtk - Math.max(1, bossAc))   / 20, 0.05, 0.95);
+    return pHitBoss > 0.001 ? pHitMinion / pHitBoss : 1;
+  }
+
+  // Average minion DPR absorbed per PC per round (full minion team, split across party).
+  function minionAdditiveDprPerPc(partySize) {
+    const count = Math.max(0, safeInt(state.minion_count, 0));
+    const dpr   = Math.max(0, safeFloat(state.minion_avg_dpr, 0));
+    if (count <= 0 || dpr <= 0 || partySize <= 0) return 0;
+    return (count * dpr) / partySize;
+  }
+
+  // Round-by-round minion-phase simulation (deterministic, focus-fire model).
+  // Returns null when no minions are configured.
+  function computeMinionPhase(partyEffDprVsBoss) {
+    const count  = Math.max(0, safeInt(state.minion_count, 0));
+    const hpEach = Math.max(1, safeFloat(state.minion_hp, 15));
+    const mAc    = Math.max(1, safeInt(state.minion_ac, 14));
+    const dprEach = Math.max(0, safeFloat(state.minion_avg_dpr, 0));
+    if (count <= 0) return null;
+
+    const ratio           = minionHitRatio(mAc, Math.max(1, safeInt(state.boss_ac, 16)));
+    const partyDprVsMinions = partyEffDprVsBoss * ratio;
+    const resist          = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
+    const regen           = Math.max(0, safeFloat(state.boss_regen, 0.0));
+
+    const rows = [];
+    let minionPoolHp = count * hpEach;
+    let bossHp       = Math.max(1, safeFloat(state.boss_hp, 150));
+    let round        = 0;
+
+    while (minionPoolHp > 0 && round < 60) {
+      round++;
+      const minionsAtStart  = Math.ceil(minionPoolHp / hpEach);
+      const minionTeamDpr   = minionsAtStart * dprEach;
+      let dprToBoss         = 0;
+
+      if (partyDprVsMinions >= minionPoolHp) {
+        // Minions die this round; overflow hits boss
+        const overflow = partyDprVsMinions - minionPoolHp;
+        minionPoolHp   = 0;
+        dprToBoss      = ratio > 0 ? Math.max(0, (overflow / ratio) / resist - regen) : 0;
+      } else {
+        minionPoolHp -= partyDprVsMinions;
+      }
+
+      bossHp -= dprToBoss;
+
+      rows.push({
+        Round: round,
+        "Minions Alive": minionPoolHp > 0 ? Math.ceil(minionPoolHp / hpEach) : 0,
+        "DPR → Minions":  round2(Math.min(partyDprVsMinions, minionsAtStart * hpEach)),
+        "Overflow → Boss": round2(dprToBoss),
+        "Boss HP Left":    round2(Math.max(0, bossHp)),
+        "Minion Team DPR": round2(minionTeamDpr),
+      });
+    }
+
+    return {
+      rows,
+      minionPhaseRounds: round,
+      bossHpAfterMinionPhase: Math.max(0, bossHp),
+      partyDprVsMinions,
+      ratio,
+    };
+  }
+
+  // Render the minion round-by-round card in the TTD panel.
+  function renderMinionTtdTable(phase) {
+    if (!els.minionTtdCard || !els.minionTtdTable) return;
+    if (!phase) {
+      els.minionTtdCard.style.display = "none";
+      return;
+    }
+    els.minionTtdCard.style.display = "";
+    renderResultTable(els.minionTtdTable, phase.rows);
+  }
+
+  // ── End Minion helpers ────────────────────────────────────────────────────
 
   function buildNovaEffRows() {
     let total = 0;
@@ -2566,6 +2738,11 @@
     base.tune_tpk_cap = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
 
     base.pacing_rounds = Math.max(1, safeInt(base.pacing_rounds, 5));
+
+    base.minion_count   = Math.max(0, safeInt(base.minion_count, 0));
+    base.minion_ac      = Math.max(1, safeInt(base.minion_ac, 14));
+    base.minion_hp      = Math.max(1, safeFloat(base.minion_hp, 15));
+    base.minion_avg_dpr = Math.max(0, safeFloat(base.minion_avg_dpr, 0));
 
     syncPartyDependentRows(base);
     return base;
