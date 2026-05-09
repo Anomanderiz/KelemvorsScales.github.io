@@ -503,6 +503,14 @@ main { margin-top: 12px; }
   color: var(--text);
   padding-top: 4px;
 }
+.form-grid .span-full {
+  grid-column: 1 / -1;
+}
+.form-divider {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 2px 0;
+}
 
 .hint {
   margin: 0 0 10px;

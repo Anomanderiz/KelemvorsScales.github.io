@@ -178,10 +178,36 @@
 
         <div class="card">
           <h2>Minion Pack — Damage</h2>
-          <p class="hint">Average DPR each minion deals per round, spread evenly across the party. Combined with minion count (set in Boss TTD) this contributes to total enemy-side pressure in all calculations.</p>
+          <p class="hint">Damage each minion deals per round, split across party members. Enable to-hit, save, or both. Damage is adjusted per PC using their AC and save bonuses from the Party table.</p>
           <div class="form-grid">
-            <label>Avg DPR per Minion
-              <input id="optMinionAvgDpr" type="number" min="0" max="999" step="0.1">
+            <label class="checkbox span-full">
+              <input id="optMinionAtkEnabled" type="checkbox"> To-Hit Attack
+            </label>
+            <label>Attack Bonus
+              <input id="optMinionAtkBonus" type="number" min="-10" max="20" step="1">
+            </label>
+            <label>Avg Dmg per Minion
+              <input id="optMinionAtkAvg" type="number" min="0" max="999" step="0.5">
+            </label>
+            <div class="form-divider span-full"></div>
+            <label class="checkbox span-full">
+              <input id="optMinionSaveEnabled" type="checkbox"> Save Damage
+            </label>
+            <label>Save Type
+              <select id="optMinionSaveStat">
+                <option value="STR">STR</option>
+                <option value="DEX">DEX</option>
+                <option value="CON">CON</option>
+                <option value="INT">INT</option>
+                <option value="WIS">WIS</option>
+                <option value="CHA">CHA</option>
+              </select>
+            </label>
+            <label>Save DC
+              <input id="optMinionSaveDc" type="number" min="1" max="30" step="1">
+            </label>
+            <label>Avg Dmg per Minion
+              <input id="optMinionSaveAvg" type="number" min="0" max="999" step="0.5">
             </label>
           </div>
         </div>

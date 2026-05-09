@@ -75,8 +75,16 @@
     minion_count: 0,
     minion_ac: 14,
     minion_hp: 15,
-    minion_avg_dpr: 0,
     minion_replenish: false,
+
+    minion_atk_enabled: false,
+    minion_atk_bonus: 4,
+    minion_atk_avg: 5,
+
+    minion_save_enabled: false,
+    minion_save_stat: "DEX",
+    minion_save_dc: 13,
+    minion_save_avg: 7,
   };
 
   const PARTY_COLUMNS = [
@@ -228,7 +236,9 @@
       "pacingRounds", "btnComputePacing", "btnApplyPacingHp", "btnApplyPacingDpr", "btnApplyBossKitMult",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
-      "optMinionCount", "optMinionAc", "optMinionHp", "optMinionAvgDpr", "optMinionReplenish",
+      "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish",
+      "optMinionAtkEnabled", "optMinionAtkBonus", "optMinionAtkAvg",
+      "optMinionSaveEnabled", "optMinionSaveStat", "optMinionSaveDc", "optMinionSaveAvg",
       "minionTtdCard", "minionTtdTable",
     ];
 
@@ -478,11 +488,17 @@
       return rounds;
     });
 
-    bindControl("optMinionCount",     "minion_count",     (el) => Math.max(0, safeInt(el.value, 0)),    { refreshEff: true });
-    bindControl("optMinionAc",        "minion_ac",        (el) => Math.max(1, safeInt(el.value, 14)),   { refreshEff: true });
-    bindControl("optMinionHp",        "minion_hp",        (el) => Math.max(1, safeFloat(el.value, 15)), { refreshEff: true });
-    bindControl("optMinionAvgDpr",    "minion_avg_dpr",   (el) => Math.max(0, safeFloat(el.value, 0)));
-    bindControl("optMinionReplenish", "minion_replenish", (el) => Boolean(el.checked),                  { refreshEff: true });
+    bindControl("optMinionCount",       "minion_count",       (el) => Math.max(0, safeInt(el.value, 0)),    { refreshEff: true });
+    bindControl("optMinionAc",          "minion_ac",          (el) => Math.max(1, safeInt(el.value, 14)),   { refreshEff: true });
+    bindControl("optMinionHp",          "minion_hp",          (el) => Math.max(1, safeFloat(el.value, 15)), { refreshEff: true });
+    bindControl("optMinionReplenish",   "minion_replenish",   (el) => Boolean(el.checked),                  { refreshEff: true });
+    bindControl("optMinionAtkEnabled",  "minion_atk_enabled", (el) => Boolean(el.checked),                  { refreshEff: true });
+    bindControl("optMinionAtkBonus",    "minion_atk_bonus",   (el) => clamp(safeInt(el.value, 4), -10, 20), { refreshEff: true });
+    bindControl("optMinionAtkAvg",      "minion_atk_avg",     (el) => Math.max(0, safeFloat(el.value, 5)),  { refreshEff: true });
+    bindControl("optMinionSaveEnabled", "minion_save_enabled",(el) => Boolean(el.checked),                  { refreshEff: true });
+    bindControl("optMinionSaveStat",    "minion_save_stat",   (el) => String(el.value || "DEX"),             { refreshEff: true });
+    bindControl("optMinionSaveDc",      "minion_save_dc",     (el) => clamp(safeInt(el.value, 13), 1, 30),  { refreshEff: true });
+    bindControl("optMinionSaveAvg",     "minion_save_avg",    (el) => Math.max(0, safeFloat(el.value, 7)),  { refreshEff: true });
   }
 
   function runButtonAction(button, action, failureMessage) {
@@ -585,11 +601,17 @@
 
     setControlValue(els.pacingRounds, state.pacing_rounds);
 
-    setControlValue(els.optMinionCount,     state.minion_count);
-    setControlValue(els.optMinionAc,        state.minion_ac);
-    setControlValue(els.optMinionHp,        state.minion_hp);
-    setControlValue(els.optMinionAvgDpr,    state.minion_avg_dpr);
+    setControlValue(els.optMinionCount,    state.minion_count);
+    setControlValue(els.optMinionAc,       state.minion_ac);
+    setControlValue(els.optMinionHp,       state.minion_hp);
     setControlChecked(els.optMinionReplenish, state.minion_replenish);
+    setControlChecked(els.optMinionAtkEnabled, state.minion_atk_enabled);
+    setControlValue(els.optMinionAtkBonus, state.minion_atk_bonus);
+    setControlValue(els.optMinionAtkAvg,   state.minion_atk_avg);
+    setControlChecked(els.optMinionSaveEnabled, state.minion_save_enabled);
+    if (els.optMinionSaveStat) els.optMinionSaveStat.value = state.minion_save_stat || "DEX";
+    setControlValue(els.optMinionSaveDc,   state.minion_save_dc);
+    setControlValue(els.optMinionSaveAvg,  state.minion_save_avg);
   }
 
   function renderPartySection() {
@@ -875,7 +897,7 @@
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const dprMult = bossDprMultiplier(state);
-    const rawAdditiveDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1) + minionAdditiveDprPerPc(party.length || 1);
+    const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const horizonRounds = Math.max(1, safeInt(state.pacing_rounds || state.enc_max_rounds, 1));
@@ -887,7 +909,8 @@
     for (const pc of party) {
       const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, horizonRounds);
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, horizonRounds);
-      const total = (baseDpr / spread + rawAdditiveDpr + phaseDpr) * dprMult;
+      const minionDpr = minionDprVsPc(pc);
+      const total = (baseDpr / spread + lairRechDpr + minionDpr + phaseDpr) * dprMult;
       const net = Math.max(0, total - thpAvg);
       const hp = Math.max(1, safeInt(pc.HP, 1));
       const exact = net > 0 ? hp / net : Number.POSITIVE_INFINITY;
@@ -926,7 +949,7 @@
       options: baseChartOptions({
         plugins: { title: { display: true, text: "Time-To-Zero per Party Member" } },
         scales: {
-          y: { beginAtZero: true, title: { display: true, text: "Rounds" } },
+          y: { beginAtZero: true, title: { display: true, text: "Rounds", color: "#aa9080" } },
         },
       }),
     });
@@ -1031,8 +1054,9 @@
         datasets: [{
           label: "S(t): Boss alive",
           data: metrics.survivalCurve,
-          stepped: true,
+          stepped: "before",
           borderColor: "rgba(191,26,47,1)",
+          borderWidth: 2,
           backgroundColor: "rgba(191,26,47,0.18)",
           fill: true,
           pointRadius: 0,
@@ -1042,8 +1066,15 @@
       options: baseChartOptions({
         plugins: { title: { display: true, text: "Boss Survival Curve" } },
         scales: {
-          y: { min: 0, max: 1, title: { display: true, text: "Probability" } },
-          x: { title: { display: true, text: "Rounds" } },
+          y: {
+            min: 0, max: 1,
+            title: { display: true, text: "Probability", color: "#aa9080" },
+            ticks: { callback: (v) => `${(v * 100).toFixed(0)}%` },
+          },
+          x: {
+            title: { display: true, text: "Rounds", color: "#aa9080" },
+            ticks: { maxTicksLimit: 13 },
+          },
         },
       }),
     });
@@ -1066,7 +1097,7 @@
       options: baseChartOptions({
         plugins: { title: { display: true, text: "TTK Distribution" }, legend: { display: false } },
         scales: {
-          y: { beginAtZero: true, title: { display: true, text: "Frequency" } },
+          y: { beginAtZero: true, title: { display: true, text: "Frequency", color: "#aa9080" } },
           x: { ticks: { maxTicksLimit: 10 } },
         },
       }),
@@ -1352,7 +1383,6 @@
     const mcMinionCount   = Math.max(0, safeInt(opts.minion_count, 0));
     const mcMinionHpEach  = Math.max(1, safeFloat(opts.minion_hp, 15));
     const mcMinionAc      = Math.max(1, safeInt(opts.minion_ac, 14));
-    const mcMinionDprEach = Math.max(0, safeFloat(opts.minion_avg_dpr, 0));
     const mcHasMinionPack = mcMinionCount > 0;
     const mcMinionHitRatio = mcHasMinionPack
       ? minionHitRatio(mcMinionAc, Math.max(1, safeInt(opts.boss_ac, 16)))
@@ -1361,6 +1391,12 @@
     const mcMinionPoolHp = mcHasMinionPack
       ? new Array(trials).fill(mcMinionCount * mcMinionHpEach)
       : null;
+    // Per-PC expected DPR from ONE minion (used in MC damage block; scaled by alive minion count)
+    const mcMinionOneDprPerPc = mcHasMinionPack
+      ? party.map((pc) => minionOneDprVsPc(pc))
+      : null;
+    const mcMinionHasDmg = mcHasMinionPack
+      && (Boolean(opts.minion_atk_enabled) || Boolean(opts.minion_save_enabled));
     // ──────────────────────────────────────────────────────────────────────
 
     for (let rnd = 1; rnd <= maxRounds; rnd += 1) {
@@ -1541,15 +1577,14 @@
           }
         }
 
-        // Minion pack attacks: living minions deal damage split across alive PCs.
-        if (mcHasMinionPack && mcMinionDprEach > 0 && mcMinionPoolHp[t] > 0) {
+        // Minion pack attacks: living minions deal damage to each alive PC based on their AC/saves.
+        if (mcHasMinionPack && mcMinionHasDmg && mcMinionPoolHp[t] > 0) {
           aliveNow = aliveIndicesForTrial(pcsAlive[t]);
           if (aliveNow.length) {
-            const minionsLeft      = Math.ceil(mcMinionPoolHp[t] / mcMinionHpEach);
-            const totalMinionDpr   = minionsLeft * mcMinionDprEach;
-            const perPcMinionDmg   = totalMinionDpr / aliveNow.length;
+            const minionsLeft = Math.ceil(mcMinionPoolHp[t] / mcMinionHpEach);
             for (const idx of aliveNow) {
-              applyDamage(idx, Math.max(0, perPcMinionDmg * dprMult));
+              const dpr = minionsLeft * mcMinionOneDprPerPc[idx] / aliveNow.length;
+              applyDamage(idx, Math.max(0, dpr * dprMult));
             }
           }
         }
@@ -1681,12 +1716,8 @@
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
-    const lairDpr = lairPerTargetDpr(state, party.length || 1);
-    const rechDpr = rechargePerTargetDpr(state, party.length || 1);
-    const minionDpr = minionAdditiveDprPerPc(party.length || 1);
-    const rawAdditiveDpr = lairDpr + rechDpr + minionDpr;
+    const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const dprMult = bossDprMultiplier(state);
-    const additiveDpr = rawAdditiveDpr * dprMult;
 
     let firstDownRound = Infinity;
     let lastDownRound = 0;
@@ -1699,7 +1730,8 @@
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
       const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, targetRounds);
       const rawPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, targetRounds);
-      const rawIncomingPerPc = rawAttackDpr / spread + rawAdditiveDpr + rawPhaseDpr;
+      const pcMinionDpr = minionDprVsPc(pc);
+      const rawIncomingPerPc = rawAttackDpr / spread + lairRechDpr + pcMinionDpr + rawPhaseDpr;
       const totalDprPerPc = rawIncomingPerPc * dprMult;
       const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
       const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
@@ -1727,8 +1759,8 @@
         AC: safeInt(pc.AC, 10),
         "Base DPR/target": round2(rawIncomingPerPc),
         "Script DPR": round2(rawPhaseDpr),
+        "Minion DPR": round2(pcMinionDpr * dprMult),
         "Scaled DPR/target": round2(totalDprPerPc),
-        "Additive DPR": round2(additiveDpr),
         "Net DPR": round2(netDprPerPc),
         "Target Mult": Number.isFinite(targetMultForPc) ? `${targetMultForPc.toFixed(2)}x` : "N/A",
         "TTD (exact)": Number.isFinite(pcTtd) ? pcTtd.toFixed(1) : "∞",
@@ -1749,7 +1781,7 @@
       toughestPcName,
       currentBossHp: safeFloat(state.boss_hp, 200),
       pcRows,
-      additiveDpr,
+      lairRechDpr,
       thpAvg,
     };
   }
@@ -1989,12 +2021,41 @@
     return pHitBoss > 0.001 ? pHitMinion / pHitBoss : 1;
   }
 
-  // Average minion DPR absorbed per PC per round (full minion team, split across party).
-  function minionAdditiveDprPerPc(partySize) {
+  // Expected DPR of ONE minion against ONE specific PC (no partySize scaling).
+  function minionOneDprVsPc(pcRow) {
+    let dpr = 0;
+    if (state.minion_atk_enabled) {
+      const ac       = Math.max(1, safeInt(pcRow.AC, 10));
+      const atkBonus = safeInt(state.minion_atk_bonus, 4);
+      const avgDmg   = Math.max(0, safeFloat(state.minion_atk_avg, 5));
+      const pHit     = clamp((21 + atkBonus - ac) / 20, 0.05, 0.95);
+      dpr += pHit * avgDmg;
+    }
+    if (state.minion_save_enabled) {
+      const saveBonus = getSaveBonus(pcRow, state.minion_save_stat);
+      const dc        = Math.max(1, safeInt(state.minion_save_dc, 13));
+      const avgDmg    = Math.max(0, safeFloat(state.minion_save_avg, 7));
+      const pFail     = pSaveFail(dc, saveBonus);
+      dpr += (0.5 + 0.5 * pFail) * avgDmg;
+    }
+    return dpr;
+  }
+
+  // Full minion pack DPR against one specific PC, distributed across the full party size.
+  function minionDprVsPc(pcRow) {
     const count = Math.max(0, safeInt(state.minion_count, 0));
-    const dpr   = Math.max(0, safeFloat(state.minion_avg_dpr, 0));
-    if (count <= 0 || dpr <= 0 || partySize <= 0) return 0;
-    return (count * dpr) / partySize;
+    if (count <= 0) return 0;
+    const partySize = state.party_table.filter((r) => String(r.Name || "").trim().length > 0).length || 1;
+    return (count / partySize) * minionOneDprVsPc(pcRow);
+  }
+
+  // Average DPR per minion, averaged over party composition (used for table display).
+  function minionDprEachAvg() {
+    const count = Math.max(0, safeInt(state.minion_count, 0));
+    if (count <= 0) return 0;
+    const members = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
+    if (!members.length) return 0;
+    return members.reduce((acc, pc) => acc + minionOneDprVsPc(pc), 0) / members.length;
   }
 
   // Round-by-round minion-phase simulation (deterministic, focus-fire model).
@@ -2003,7 +2064,7 @@
     const count    = Math.max(0, safeInt(state.minion_count, 0));
     const hpEach   = Math.max(1, safeFloat(state.minion_hp, 15));
     const mAc      = Math.max(1, safeInt(state.minion_ac, 14));
-    const dprEach  = Math.max(0, safeFloat(state.minion_avg_dpr, 0));
+    const dprEach  = minionDprEachAvg();
     if (count <= 0) return null;
 
     const ratio             = minionHitRatio(mAc, Math.max(1, safeInt(state.boss_ac, 16)));
@@ -2848,8 +2909,17 @@
     base.minion_count     = Math.max(0, safeInt(base.minion_count, 0));
     base.minion_ac        = Math.max(1, safeInt(base.minion_ac, 14));
     base.minion_hp        = Math.max(1, safeFloat(base.minion_hp, 15));
-    base.minion_avg_dpr   = Math.max(0, safeFloat(base.minion_avg_dpr, 0));
     base.minion_replenish = Boolean(base.minion_replenish);
+
+    base.minion_atk_enabled = Boolean(base.minion_atk_enabled);
+    base.minion_atk_bonus   = clamp(safeInt(base.minion_atk_bonus, 4), -10, 20);
+    base.minion_atk_avg     = Math.max(0, safeFloat(base.minion_atk_avg, 5));
+
+    base.minion_save_enabled = Boolean(base.minion_save_enabled);
+    base.minion_save_stat    = SAVE_KEYS.includes(String(base.minion_save_stat || "DEX").toUpperCase())
+      ? String(base.minion_save_stat).toUpperCase() : "DEX";
+    base.minion_save_dc      = clamp(safeInt(base.minion_save_dc, 13), 1, 30);
+    base.minion_save_avg     = Math.max(0, safeFloat(base.minion_save_avg, 7));
 
     syncPartyDependentRows(base);
     return base;
