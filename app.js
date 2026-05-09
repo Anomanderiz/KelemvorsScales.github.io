@@ -1117,97 +1117,6 @@
     return metrics;
   }
 
-  function autoTuneBossHp() {
-    setStatus("Auto-tuning boss HP…", 0);
-
-    const targetRound    = Math.max(1, safeInt(state.pacing_rounds, 5));
-    const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
-    const tpkCap         = safeFloat(state.tune_tpk_cap, 0.05);
-    const originalTrials = safeInt(state.enc_trials, 10000);
-    const quickTrials    = Math.max(3000, Math.floor(originalTrials * 0.4));
-
-    // Returns fraction of all trials where boss is killed by targetRound.
-    const simulateKillRate = (hp, trials) => {
-      const metrics = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
-      if (metrics.error) return { killRate: 0, tpk: 1.0, metrics: null };
-      const kr = metrics.ttk.filter(v => Number.isFinite(v) && v <= targetRound).length / metrics.ttk.length;
-      return { killRate: kr, tpk: metrics.tpkProb, metrics };
-    };
-
-    let low  = 1.0;
-    let high = Math.max(10.0, safeFloat(state.boss_hp, 150));
-
-    // Check that kill rate is achievable at all (HP=1 must succeed).
-    if (simulateKillRate(low, quickTrials).killRate < killRateTarget) {
-      alert(`Cannot reach ${(killRateTarget * 100).toFixed(0)}% kill rate even at HP 1 — check boss DPR and party configuration.`);
-      setStatus("Auto-tune HP: kill rate not achievable.", 3200);
-      return;
-    }
-
-    // Expand high bracket until kill rate drops below target.
-    let attempts = 0;
-    while (simulateKillRate(high, quickTrials).killRate >= killRateTarget && attempts < 12) {
-      high *= 2;
-      attempts++;
-    }
-
-    // Binary search: find highest HP where killRate ≥ killRateTarget.
-    for (let i = 0; i < 20; i++) {
-      const mid = (low + high) / 2;
-      if (simulateKillRate(mid, quickTrials).killRate >= killRateTarget) {
-        low = mid;
-      } else {
-        high = mid;
-      }
-      if (Math.abs(low - high) < 1.0) break;
-    }
-
-    let tunedHp    = Math.max(1, Math.round(low));
-    let capAdjusted = false;
-
-    // TPK cap: if tuned HP causes too-high TPK, binary-search for the highest HP within cap.
-    const atTuned = simulateKillRate(tunedHp, quickTrials);
-    if (atTuned.tpk > tpkCap + 1e-9) {
-      const atMin = simulateKillRate(1, quickTrials);
-      if (atMin.tpk <= tpkCap + 1e-9) {
-        let capLow = 1, capHigh = tunedHp;
-        while (capLow < capHigh) {
-          const midHp = Math.floor((capLow + capHigh + 1) / 2);
-          if (simulateKillRate(midHp, quickTrials).tpk <= tpkCap + 1e-9) {
-            capLow = midHp;
-          } else {
-            capHigh = midHp - 1;
-          }
-        }
-        tunedHp     = capLow;
-        capAdjusted = true;
-      }
-    }
-
-    state.boss_hp    = tunedHp;
-    state.enc_trials = originalTrials;
-    syncControlsFromState();
-    persistState();
-    refreshReport();
-
-    const finalMetrics = runEncounterAndRender();
-    if (finalMetrics && !finalMetrics.error) {
-      const finiteTtk  = finalMetrics.ttk.filter(v => Number.isFinite(v));
-      const finalMed   = finiteTtk.length ? percentile(finiteTtk, 50).toFixed(2) : "N/A";
-      const finalKr    = (100 * finiteTtk.filter(v => v <= targetRound).length / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
-      const finalTpk   = finalMetrics.tpkProb;
-
-      if (finalTpk > tpkCap + 1e-9) {
-        alert(`Auto-tuned HP=${tunedHp}, kill rate ${finalKr}% by round ${targetRound}, but TPK=${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
-      } else if (capAdjusted) {
-        alert(`TPK cap applied → HP=${tunedHp}. Kill rate ${finalKr}% by R${targetRound}, median TTK ${finalMed}R, TPK ${(100 * finalTpk).toFixed(1)}%.`);
-      }
-      setStatus(`Auto-tune complete. Boss HP → ${tunedHp}.`, 4200);
-      return;
-    }
-    setStatus("Auto-tune completed with partial results.", 4200);
-  }
-
   function autoTuneAll() {
     setStatus("Auto-tuning encounter… Stage 1: boss DPR.", 0);
 
@@ -2441,14 +2350,23 @@
     };
   }
 
-  // Derives party DPR CV from nova table attack structure and DPR table damage formulas.
-  // Includes both hit/miss variance and damage dice variance for each PC.
-  // Party-wide: sqrt(Σ varPerPC_i) / Σ effDpr_i (independent PCs).
+  // Derives the per-PC DPR CV used in runEncounterMc (gammaRng per PC).
+  //
+  // The simulation draws gammaRng(effMean_j, dprCv) for each PC independently.
+  // When N such draws are summed, the party total has:
+  //   CV_party_sim = dprCv × sqrt(Σ effMean²) / Σ effMean
+  //
+  // This function computes CV_physics (the party variance from actual attack physics)
+  // then applies the correction factor so that CV_party_sim = CV_physics:
+  //   dprCv_returned = CV_physics × Σ effMean / sqrt(Σ effMean²)
+  //
+  // Includes hit/miss variance and damage-dice variance per attack.
   function computePartyDprCv() {
     const rows = state.party_nova_table.filter(r => String(r.Member || "").trim());
     if (!rows.length) return 0.6;
     let totalDpr = 0;
     let totalVar = 0;
+    let sumDprSq = 0;
     for (const row of rows) {
       const dprRow  = dprRowFor(row.Member);
       const avgDmg  = Math.max(0, averageDamage(dprRow.Damage || "1d6"));
@@ -2462,21 +2380,25 @@
       let varPerAtk;
       if (nova.method === "attack") {
         const p = clamp(nova.pMain, 0.05, 0.95);
-        // Var[single attack] = p(1-p)·avgDmg² + p·varDmg  (hit/miss × expected damage² + hit × dice variance)
+        // Var[single attack] = p(1-p)·avgDmg² + p·varDmg
         varPerAtk = p * (1 - p) * avgDmg * avgDmg + p * varDmg;
       } else {
         const pFail = clamp(nova.pMain, 0.05, 0.95);
-        // Var[mult] = 0.25·pFail·(1-pFail) where mult is 1 on fail, 0.5 on success
-        const varMult   = 0.25 * pFail * (1 - pFail);
-        const eMult2    = 0.25 + 0.75 * pFail;  // E[mult²]
+        const varMult = 0.25 * pFail * (1 - pFail);
+        const eMult2  = 0.25 + 0.75 * pFail;
         varPerAtk = avgDmg * avgDmg * varMult + eMult2 * varDmg;
       }
-      // Var[round] = attacks × uptime × varPerAtk  (treat uptime as deterministic)
       totalDpr += eff;
       totalVar += attacks * uptime * varPerAtk;
+      sumDprSq += eff * eff;
     }
     if (totalDpr <= 0) return 0.6;
-    return clamp(Math.sqrt(totalVar) / totalDpr, 0.05, 2.0);
+    // cvPhysics is the true party-level CV from attack structure.
+    const cvPhysics = Math.sqrt(totalVar) / totalDpr;
+    // Correction: simulation draws per-PC with the same CV, so simulated party CV =
+    // dprCv × sqrt(Σm²)/Σm.  To match cvPhysics, scale by Σm/sqrt(Σm²) ≥ 1.
+    const corrFactor = sumDprSq > 0 ? totalDpr / Math.sqrt(sumDprSq) : 1.0;
+    return clamp(cvPhysics * corrFactor, 0.05, 2.0);
   }
 
   function refreshDerivedCv() {
@@ -2823,12 +2745,13 @@
   }
 
   // Variance of a damage expression's dice terms. Var(XdN) = X·(N²-1)/12.
+  // Uses Math.abs(count) because variance is always additive (Var[X-Y] = Var[X]+Var[Y]).
   function varianceDamage(expr) {
     const parsed = parseDamageExpression(expr);
     let variance = 0;
     for (const [count, sides] of parsed.dice) {
       if (sides <= 1) continue;
-      variance += count * (sides * sides - 1) / 12;
+      variance += Math.abs(count) * (sides * sides - 1) / 12;
     }
     return Math.max(0, variance);
   }
@@ -2837,7 +2760,13 @@
     const parsed = parseDamageExpression(expr);
     let avgDice = 0;
     for (const [count, sides] of parsed.dice) {
-      avgDice += count * (sides + (sides + 1) / 2);
+      // Positive dice: crunchy crit = max value + average roll per die.
+      // Negative dice (e.g. "2d6-1d4"): no crit bonus — treat as normal average.
+      if (count > 0) {
+        avgDice += count * (sides + (sides + 1) / 2);
+      } else {
+        avgDice += count * (sides + 1) / 2;
+      }
     }
     return Math.max(0, parsed.sign * (avgDice + parsed.mod));
   }
