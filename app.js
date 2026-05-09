@@ -24,10 +24,10 @@
       { Member: "Wizard",  DPR: 24.0 },
     ],
     party_nova_table: [
-      { Member: "Fighter", "Nova DPR": 18.0, Method: "attack",    "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
-      { Member: "Rogue",   "Nova DPR": 22.0, Method: "attack",    "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
-      { Member: "Cleric",  "Nova DPR": 12.0, Method: "attack",    "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
-      { Member: "Wizard",  "Nova DPR": 24.0, Method: "save_half", "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Fighter", "Nova DPR": 18.0, Method: "attack",    "Attacks": 2, "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
+      { Member: "Rogue",   "Nova DPR": 22.0, Method: "attack",    "Attacks": 1, "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Cleric",  "Nova DPR": 12.0, Method: "attack",    "Attacks": 1, "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
+      { Member: "Wizard",  "Nova DPR": 24.0, Method: "save_half", "Attacks": 1, "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
     ],
 
     mode_select: "normal",
@@ -124,6 +124,7 @@
       options: ["normal", "adv", "dis"],
       parser: (v) => normalizeRollMode(v),
     },
+    { key: "Attacks", label: "Attacks", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Target AC", label: "Target AC", type: "number", readOnly: true },
     { key: "Crit", label: "Crit ≥", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
     { key: "Crit Ratio", label: "Crit Ratio", type: "number", step: "0.01", parser: (v) => Math.max(0, safeFloat(v, 1.5)) },
@@ -183,6 +184,7 @@
     bindOptionControls();
     initResizableWidgets();
     renderAll();
+    refreshDerivedCv();
     setStatus("Ready.", 1800);
   }
 
@@ -676,6 +678,7 @@
         state.party_nova_table[rowIndex][key] = value;
         state.party_nova_table[rowIndex] = sanitizeNovaRow(state.party_nova_table[rowIndex]);
         syncPartyDependentRows(state);
+        refreshDerivedCv();
         persistState();
         renderPartySection();
         refreshEffTableFromMode();
@@ -1306,6 +1309,10 @@
     }
 
     // ── Stage 3.5: Tighten p10-p90 band by adjusting DPR CV ───────────────
+    // Re-derive CV from attack structure as the natural floor before trying to reduce it.
+    if (Boolean(state.enc_use_nova)) {
+      state.dpr_cv = round2(clamp(computePartyDprCv(), 0.05, 2.0));
+    }
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const bandCheck  = runEncounterMc({ boss_hp: tunedHp, enc_trials: quickTrials });
     if (!bandCheck.error) {
@@ -2395,6 +2402,43 @@
     };
   }
 
+  // Derives party DPR coefficient of variation from nova table attack structure.
+  // CV_pc = sqrt((1-p)/p) / sqrt(N) for attack-type; save formula uses half-damage variance.
+  // Party-wide: sqrt(Σ(effDpr_i × cv_i)²) / Σ effDpr_i (independent PCs).
+  function computePartyDprCv() {
+    const rows = state.party_nova_table.filter(r => String(r.Member || "").trim());
+    if (!rows.length) return 0.6;
+    let totalDpr = 0;
+    let totalVar = 0;
+    for (const row of rows) {
+      const attacks = Math.max(1, safeInt(row["Attacks"], 1));
+      const nova    = computeNovaConversion(row, safeInt(state.boss_ac, 16));
+      const eff     = nova.effDpr;
+      if (eff <= 0) continue;
+      let cvPc;
+      if (nova.method === "attack") {
+        const p = clamp(nova.pMain, 0.05, 0.95);
+        cvPc = Math.sqrt((1 - p) / p) / Math.sqrt(attacks);
+      } else {
+        const pFail = clamp(nova.pMain, 0.05, 0.95);
+        cvPc = Math.sqrt(pFail * (1 - pFail)) / ((1 + pFail) * Math.sqrt(attacks));
+      }
+      totalDpr += eff;
+      totalVar += (eff * cvPc) ** 2;
+    }
+    if (totalDpr <= 0) return 0.6;
+    return clamp(Math.sqrt(totalVar) / totalDpr, 0.05, 2.0);
+  }
+
+  function refreshDerivedCv() {
+    if (!Boolean(state.enc_use_nova)) return;
+    const derived = round2(computePartyDprCv());
+    if (Math.abs(derived - state.dpr_cv) > 0.005) {
+      state.dpr_cv = derived;
+      if (els.encDprCv) setControlValue(els.encDprCv, state.dpr_cv);
+    }
+  }
+
   function perRoundDprVsPc(pcRow, mode, attacks, horizonRounds = 1) {
     const ac = Math.max(1, safeInt(pcRow.AC, 10));
     let total = 0;
@@ -3127,6 +3171,7 @@
         Member: name,
         "Nova DPR": Math.max(0, safeFloat(dpr ? dpr.DPR : 10.0, 10.0)),
         Method: normalizeNovaMethod(nRow.Method),
+        "Attacks": Math.max(1, safeInt(nRow["Attacks"], 1)),
         "Atk Bonus": safeInt(nRow["Atk Bonus"], 7),
         "Roll Mode": normalizeRollMode(nRow["Roll Mode"]),
         "Target AC": bossAc,
@@ -3175,6 +3220,7 @@
       Member: String(row.Member || "").trim(),
       "Nova DPR": Math.max(0, safeFloat(row["Nova DPR"], 0)),
       Method: normalizeNovaMethod(row.Method),
+      "Attacks": Math.max(1, safeInt(row["Attacks"], 1)),
       "Atk Bonus": safeInt(row["Atk Bonus"], 7),
       "Roll Mode": normalizeRollMode(row["Roll Mode"]),
       "Target AC": Math.max(1, safeInt(row["Target AC"], 16)),
