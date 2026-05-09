@@ -24,10 +24,10 @@
       { Member: "Wizard",  DPR: 24.0 },
     ],
     party_nova_table: [
-      { Member: "Fighter", "Nova DPR": 18.0, Method: "attack",    "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
-      { Member: "Rogue",   "Nova DPR": 22.0, Method: "attack",    "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
-      { Member: "Cleric",  "Nova DPR": 12.0, Method: "attack",    "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
-      { Member: "Wizard",  "Nova DPR": 24.0, Method: "save_half", "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Fighter", "Nova DPR": 18.0, Method: "attack",    "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
+      { Member: "Rogue",   "Nova DPR": 22.0, Method: "attack",    "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Cleric",  "Nova DPR": 12.0, Method: "attack",    "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
+      { Member: "Wizard",  "Nova DPR": 24.0, Method: "save_half", "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
     ],
 
     mode_select: "normal",
@@ -70,6 +70,7 @@
     tune_target_median: 5.0,
     tune_tpk_cap: 0.05,
     tune_kill_rate: 0.75,
+    tune_band_max: 3.0,
 
     pacing_rounds: 5,
 
@@ -230,12 +231,12 @@
       "mcTarget", "mcRounds", "mcTrials", "mcShowHist", "btnRunMc", "mcChart",
       "lblMcMean", "lblMcP95", "lblMcP99",
       "encTrials", "encMaxRounds", "encDprCv", "encInitiative", "encUseNova",
-      "tuneMedian", "tuneTpkCap", "tuneKillRate",
-      "btnRunEncounter", "btnAutoTune", "btnAutoTuneAll",
+      "tuneMedian", "tuneTpkCap", "tuneKillRate", "tuneBandMax",
+      "btnRunEncounter", "btnAutoTuneAll",
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
       "reportText",
-      "pacingRounds", "btnComputePacing", "btnApplyPacingHp", "btnApplyPacingDpr", "btnApplyBossKitMult",
+      "pacingRounds", "btnApplyPacingHp", "btnApplyPacingDpr", "btnApplyBossKitMult",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
       "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish",
@@ -390,10 +391,6 @@
       runButtonAction(els.btnRunEncounter, runEncounterAndRender, "Full analysis failed.");
     });
 
-    els.btnAutoTune.addEventListener("click", () => {
-      runButtonAction(els.btnAutoTune, autoTuneBossHp, "Monte Carlo tuning failed.");
-    });
-
     els.btnAutoTuneAll.addEventListener("click", () => {
       runButtonAction(els.btnAutoTuneAll, autoTuneAll, "Encounter tuning failed.");
     });
@@ -402,9 +399,6 @@
       runButtonAction(els.btnRunMc, runSingleTargetMc, "Single-target Monte Carlo failed.");
     });
 
-    els.btnComputePacing.addEventListener("click", () => {
-      runGuardedAction(runComputePacing, "Deterministic pacing failed.");
-    });
 
     els.btnApplyPacingHp.addEventListener("click", () => {
       applyPacingHp();
@@ -488,6 +482,7 @@
     bindControl("tuneMedian",    "tune_target_median", (el) => clamp(safeFloat(el.value, 5.0), 1.0, 20.0));
     bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
     bindControl("tuneKillRate",  "tune_kill_rate",     (el) => clamp(safeFloat(el.value, 0.75), 0.50, 0.95));
+    bindControl("tuneBandMax",   "tune_band_max",      (el) => Math.max(0.5, safeFloat(el.value, 3.0)));
 
     bindControl("pacingRounds", "pacing_rounds", (el) => {
       const rounds = Math.max(1, safeInt(el.value, 5));
@@ -606,6 +601,7 @@
     setControlValue(els.tuneMedian,    state.tune_target_median);
     setControlValue(els.tuneTpkCap,    state.tune_tpk_cap);
     setControlValue(els.tuneKillRate,  state.tune_kill_rate);
+    setControlValue(els.tuneBandMax,   state.tune_band_max);
 
     setControlValue(els.pacingRounds, state.pacing_rounds);
 
@@ -1307,6 +1303,41 @@
       capAdjusted  = true;
     }
 
+    // ── Stage 3.5: Tighten p10-p90 band by adjusting DPR CV ───────────────
+    const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
+    const bandCheck  = runEncounterMc({ boss_hp: tunedHp, enc_trials: quickTrials });
+    if (!bandCheck.error) {
+      const finiteBand = bandCheck.ttk.filter(v => Number.isFinite(v));
+      if (finiteBand.length >= 10) {
+        const actualBand = percentile(finiteBand, 90) - percentile(finiteBand, 10);
+        if (actualBand > bandTarget + 0.05) {
+          const currentCv = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
+          // Proportional estimate: band scales linearly with CV (same HP and DPR).
+          const neededCv = Math.max(0.10, currentCv * bandTarget / actualBand);
+          if (neededCv < currentCv - 0.01) {
+            const oldCv    = currentCv;
+            state.dpr_cv   = Math.round(neededCv * 100) / 100;
+            // Re-run HP binary search with new CV so kill rate stays on target.
+            let bLow = 1.0, bHigh = Math.max(10.0, tunedHp * 1.5);
+            if (simulateKillRate(bLow, quickTrials).killRate >= killRateTarget) {
+              let bAttempts = 0;
+              while (simulateKillRate(bHigh, quickTrials).killRate >= killRateTarget && bAttempts < 10) {
+                bHigh *= 2; bAttempts++;
+              }
+              for (let i = 0; i < 15; i++) {
+                const mid = (bLow + bHigh) / 2;
+                if (simulateKillRate(mid, quickTrials).killRate >= killRateTarget) { bLow = mid; }
+                else { bHigh = mid; }
+                if (Math.abs(bLow - bHigh) < 1.0) break;
+              }
+              tunedHp = Math.max(1, Math.round(bLow));
+            }
+            changes.push(`DPR CV: ${oldCv.toFixed(2)} → ${state.dpr_cv.toFixed(2)} (band ${actualBand.toFixed(1)}R → target ≤${bandTarget.toFixed(1)}R)`);
+          }
+        }
+      }
+    }
+
     if (Math.abs(tunedHp - Math.round(oldBossHp)) > 0) {
       changes.push(`Boss HP: ${Math.round(oldBossHp)} → ${tunedHp}`);
     }
@@ -1403,7 +1434,7 @@
             if (currentMode === "adv") roll = Math.max(r1, r2);
             if (currentMode === "dis") roll = Math.min(r1, r2);
 
-            const isCrit = roll === 20;
+            const isCrit = roll >= (atk.crit_threshold ?? 20);
             const isHit = isCrit || (roll !== 1 && roll + atk.attack_bonus >= currentAc);
 
             if (isHit) {
@@ -1647,7 +1678,7 @@
               if (currentMode[target] === "adv") r = Math.max(r1, r2);
               if (currentMode[target] === "dis") r = Math.min(r1, r2);
 
-              const isCrit = r === 20;
+              const isCrit = r >= (atk.crit_threshold ?? 20);
               const isHit = isCrit || (r !== 1 && r + atk.attack_bonus >= currentAc[target]);
 
               if (isHit) {
@@ -2334,10 +2365,11 @@
     let baseFactor = 1;
 
     if (method === "attack") {
-      const atkBonus = safeInt(row["Atk Bonus"], 0);
-      const targetAc = Math.max(1, safeInt(row["Target AC"], fallbackBossAc));
-      const critRatio = Math.max(0, safeFloat(row["Crit Ratio"], 1.5));
-      const [pNon, crit, pAny] = hitProbs(targetAc, atkBonus, mode);
+      const atkBonus      = safeInt(row["Atk Bonus"], 0);
+      const targetAc      = Math.max(1, safeInt(row["Target AC"], fallbackBossAc));
+      const critRatio     = Math.max(0, safeFloat(row["Crit Ratio"], 1.5));
+      const critThreshold = Math.max(2, Math.min(20, safeInt(row["Crit"], 20)));
+      const [pNon, crit, pAny] = hitProbs(targetAc, atkBonus, mode, critThreshold);
       pMain = pAny;
       pCrit = crit;
       baseFactor = pNon + critRatio * pCrit;
@@ -2372,7 +2404,7 @@
       if (atk.kind === "save") {
         dpr = expectedSaveHalfDamage(atk.dc, getSaveBonus(pcRow, atk.save_stat), atk.damage_expr);
       } else {
-        dpr = expectedAttackDamage(ac, atk.attack_bonus, atk.damage_expr, mode);
+        dpr = expectedAttackDamage(ac, atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold);
       }
       total += dpr * uses;
     }
@@ -2530,6 +2562,7 @@
         uses_per_round: Math.max(0, safeInt(row["Uses/round"], 1)),
         uses_encounter: Math.max(0, safeInt(row["Uses/encounter"], 0)),
         is_melee: Boolean(row["Melee?"]),
+        crit_threshold: Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
       });
     }
     return out;
@@ -2540,8 +2573,8 @@
     return safeInt(pcRow[key], 0);
   }
 
-  function expectedAttackDamage(ac, attackBonus, dmgExpr, mode = "normal") {
-    const [pNonCrit, pCrit] = hitProbs(ac, attackBonus, mode);
+  function expectedAttackDamage(ac, attackBonus, dmgExpr, mode = "normal", critThreshold = 20) {
+    const [pNonCrit, pCrit] = hitProbs(ac, attackBonus, mode, critThreshold);
     return pNonCrit * averageDamage(dmgExpr) + pCrit * averageCrunchyCritDamage(dmgExpr);
   }
 
@@ -2549,10 +2582,11 @@
     return (0.5 + 0.5 * pSaveFail(dc, saveBonus)) * averageDamage(dmgExpr);
   }
 
-  function hitProbs(ac, attackBonus, mode = "normal") {
+  function hitProbs(ac, attackBonus, mode = "normal", critThreshold = 20) {
+    const safeCrit = Math.max(2, Math.min(20, critThreshold));
     const classify = (roll) => {
       if (roll === 1) return [false, false];
-      if (roll === 20) return [true, true];
+      if (roll >= safeCrit) return [true, true];
       return [roll + attackBonus >= ac, false];
     };
 
@@ -3037,6 +3071,7 @@
     base.tune_target_median = clamp(safeFloat(base.tune_target_median, 5.0), 1.0, 20.0);
     base.tune_tpk_cap  = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
     base.tune_kill_rate = clamp(safeFloat(base.tune_kill_rate, 0.75), 0.50, 0.95);
+    base.tune_band_max  = Math.max(0.5, safeFloat(base.tune_band_max, 3.0));
 
     base.pacing_rounds = Math.max(1, safeInt(base.pacing_rounds, 5));
 
@@ -3141,6 +3176,7 @@
       "Roll Mode": normalizeRollMode(row["Roll Mode"]),
       "Target AC": Math.max(1, safeInt(row["Target AC"], 16)),
       "Crit Ratio": Math.max(0, safeFloat(row["Crit Ratio"], 1.5)),
+      "Crit": Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
       "Save DC": Math.max(1, safeInt(row["Save DC"], 16)),
       "Target Save Bonus": safeInt(row["Target Save Bonus"], 0),
       "Save Success Mult": clamp(safeFloat(row["Save Success Mult"], 0.5), 0, 1),
@@ -3160,6 +3196,7 @@
       "Uses/encounter": Math.max(0, safeInt(row["Uses/encounter"], 0)),
       "Melee?": Boolean(row["Melee?"]),
       "Enabled?": Boolean(row["Enabled?"]),
+      "Crit": Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
     };
   }
 
