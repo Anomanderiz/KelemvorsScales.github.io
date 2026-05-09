@@ -1651,10 +1651,29 @@
     const bossRegen = Math.max(0, safeFloat(state.boss_regen, 0.0));
     const effectivePartyDprOnBoss = Math.max(0, totalPartyDpr / resistFactor - bossRegen);
 
-    // Recommended boss HP = effectivePartyDPR × targetRounds
-    const recommendedBossHp = effectivePartyDprOnBoss > 0
-      ? Math.max(1, Math.round(effectivePartyDprOnBoss * targetRounds))
-      : 0;
+    // Recommended boss HP — minion-aware
+    const minionPhaseInfo = computeMinionPhase(totalPartyDpr);
+    let recommendedBossHp;
+    if (!minionPhaseInfo) {
+      recommendedBossHp = effectivePartyDprOnBoss > 0
+        ? Math.max(1, Math.round(effectivePartyDprOnBoss * targetRounds))
+        : 0;
+    } else if (minionPhaseInfo.replenishing && !minionPhaseInfo.canClearPerRound) {
+      // Boss is permanently screened — party can never reach it.
+      recommendedBossHp = 0;
+    } else if (minionPhaseInfo.replenishing && minionPhaseInfo.canClearPerRound) {
+      // Party clears minions every round; only overflow reaches boss.
+      recommendedBossHp = minionPhaseInfo.overflowBossPerRound > 0
+        ? Math.max(1, Math.round(minionPhaseInfo.overflowBossPerRound * targetRounds))
+        : 0;
+    } else {
+      // Non-replenishing: some rounds absorb minions, then boss is exposed.
+      const minionRounds = Math.min(minionPhaseInfo.minionPhaseRounds, targetRounds);
+      const bossRoundsAfter = Math.max(0, targetRounds - minionRounds);
+      const totalBossDmg = minionPhaseInfo.totalBossDmgDuringPhase
+        + effectivePartyDprOnBoss * bossRoundsAfter;
+      recommendedBossHp = totalBossDmg > 0 ? Math.max(1, Math.round(totalBossDmg)) : 0;
+    }
 
     // Per-PC TTD at current boss DPR
     const attacks = attacksEnabledFromTable(state.attacks_table);
@@ -1720,6 +1739,7 @@
     return {
       targetRounds,
       recommendedBossHp,
+      minionPhaseInfo,
       effectivePartyDprOnBoss,
       firstDownRound: Number.isFinite(firstDownRound) ? firstDownRound : null,
       lastDownRound: lastDownRound > 0 ? lastDownRound : null,
@@ -1833,7 +1853,20 @@
   function renderPacingResult(r) {
     // Metric values
     setText(els.pacingBossHp, r.recommendedBossHp > 0 ? String(r.recommendedBossHp) : "N/A");
-    setText(els.pacingBossHpSub, `party eff. DPR ${r.effectivePartyDprOnBoss.toFixed(1)} × ${r.targetRounds} rounds`);
+    {
+      const mph = r.minionPhaseInfo;
+      let hpSub;
+      if (!mph) {
+        hpSub = `party eff. DPR ${r.effectivePartyDprOnBoss.toFixed(1)} × ${r.targetRounds} rounds`;
+      } else if (mph.replenishing && !mph.canClearPerRound) {
+        hpSub = `boss permanently screened by replenishing minions`;
+      } else if (mph.replenishing && mph.canClearPerRound) {
+        hpSub = `${mph.overflowBossPerRound.toFixed(1)} overflow/round × ${r.targetRounds} rounds (minions cleared each round)`;
+      } else {
+        hpSub = `${mph.minionPhaseRounds}R minion phase + ${r.effectivePartyDprOnBoss.toFixed(1)} eff. DPR × ${Math.max(0, r.targetRounds - mph.minionPhaseRounds)} remaining rounds`;
+      }
+      setText(els.pacingBossHpSub, hpSub);
+    }
 
     if (r.firstDownRound != null) {
       const fd = Math.ceil(r.firstDownRound);
@@ -1880,7 +1913,14 @@
     let badge = "";
     let analysis = "";
 
-    if (r.effectivePartyDprOnBoss <= 0) {
+    const mph = r.minionPhaseInfo;
+    if (mph && mph.replenishing && !mph.canClearPerRound) {
+      cls = "bal-hard";
+      badge = `<span class="pacing-badge badge-hard">Boss Screened</span>`;
+      analysis = `Replenishing minion pack permanently shields the boss — the party can't one-round the pack. ` +
+        `The party needs more than ${round2(mph.partyDprVsMinions)} effective DPR vs minion AC to break through. ` +
+        `Reduce minion count/HP or raise party DPR.`;
+    } else if (r.effectivePartyDprOnBoss <= 0) {
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Cannot Kill Boss</span>`;
       analysis = "Party effective DPR on the boss is zero — check resistance factor, regen, and party DPR settings.";
@@ -2013,12 +2053,14 @@
         });
       }
       return { rows, minionPhaseRounds: round, bossHpAfterMinionPhase: 0,
-               partyDprVsMinions, ratio, replenishing: true, canClearPerRound: true };
+               overflowBossPerRound: overflowBoss, partyDprVsMinions, ratio,
+               replenishing: true, canClearPerRound: true };
     }
 
     // ── Non-replenishing: pool depletes over multiple rounds ──────────────
     let minionPoolHp = totalPool;
     let round = 0;
+    const initialBossHp = bossHp;
 
     while (minionPoolHp > 0 && round < 60) {
       round++;
@@ -2046,8 +2088,9 @@
       });
     }
 
+    const totalBossDmgDuringPhase = Math.max(0, initialBossHp - Math.max(0, bossHp));
     return { rows, minionPhaseRounds: round, bossHpAfterMinionPhase: Math.max(0, bossHp),
-             partyDprVsMinions, ratio, replenishing: false };
+             totalBossDmgDuringPhase, partyDprVsMinions, ratio, replenishing: false };
   }
 
   // Render the minion round-by-round card in the TTD panel.
