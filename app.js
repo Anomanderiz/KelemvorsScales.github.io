@@ -1211,9 +1211,12 @@
   function autoTuneAll() {
     setStatus("Auto-tuning encounter… Stage 1: boss DPR.", 0);
 
-    const targetRound    = Math.max(1, safeInt(state.pacing_rounds, 5));
+    // targetRound is mutable — the tuner may adjust it within [5, 10] for band compliance.
+    let targetRound      = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const origTarget     = targetRound;
     const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const tpkCap         = safeFloat(state.tune_tpk_cap, 0.05);
+    const bandTarget     = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const originalTrials = safeInt(state.enc_trials, 10000);
     const quickTrials    = Math.max(3000, Math.floor(originalTrials * 0.4));
     const changes        = [];
@@ -1231,124 +1234,139 @@
     // ── Stage 2: Minion HP for reliable clearing (replenishing packs only) ─
     const minionCount = Math.max(0, safeInt(state.minion_count, 0));
     if (minionCount > 0 && Boolean(state.minion_replenish)) {
-      // partyDprVsMinions is recomputed after updating boss_dpr_mult (doesn't matter —
-      // minionHitRatio depends only on AC values, not DPR mult, so no change needed).
       const mph = pacingResult.minionPhaseInfo;
-      if (mph && mph.partyDprVsMinions > 0) {
-        const cv      = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
-        // Pool HP s.t. P(Gamma(μ=partyDprVsMinions, cv) ≥ poolHP) = killRateTarget
-        const poolHp  = mph.partyDprVsMinions * Math.max(0.05, 1 + invNorm01(1 - killRateTarget) * cv);
-        const newHp   = Math.max(1, Math.round(poolHp / minionCount));
-        if (newHp !== Math.round(state.minion_hp)) {
-          changes.push(`Minion HP: ${Math.round(state.minion_hp)} → ${newHp} (${(killRateTarget * 100).toFixed(0)}% clear rate)`);
-          state.minion_hp = newHp;
-        }
+      if (!mph || mph.partyDprVsMinions <= 0) {
+        // Party does 0 DPR vs minions — encounter is impossible.
+        const partial = changes.length ? `Applied so far:\n${changes.map(c => `  • ${c}`).join("\n")}\n\n` : "";
+        alert(`${partial}⚠ Impossible encounter: Party cannot damage minions at AC ${state.minion_ac}.\nReduce minion AC, add melee/ranged attacks, or remove the minion pack.\n\nAuto-tune aborted.`);
+        setStatus("Auto-tune aborted — minions are unkillable.", 4000);
+        return;
+      }
+      const cv     = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
+      // Gamma quantile: HP pool the party can burn through with the given reliability.
+      const poolHp = mph.partyDprVsMinions * Math.max(0.05, 1 + invNorm01(1 - killRateTarget) * cv);
+      const newHp  = Math.max(1, Math.round(poolHp / minionCount));
+      // Sanity check: if HP per minion would exceed the one-round-clear limit, the count is too high.
+      const clearLimit = Math.floor(mph.partyDprVsMinions / minionCount);
+      if (clearLimit < 1) {
+        const partial = changes.length ? `Applied so far:\n${changes.map(c => `  • ${c}`).join("\n")}\n\n` : "";
+        alert(`${partial}⚠ Too many minions: ${minionCount} minions with any HP cannot all be cleared in one round.\nParty deals ${mph.partyDprVsMinions.toFixed(0)} DPR vs minions — need fewer than ${Math.floor(mph.partyDprVsMinions)} minions for even 1 HP each.\nReduce minion count or remove replenish, then re-tune.\n\nAuto-tune aborted.`);
+        setStatus("Auto-tune aborted — too many replenishing minions.", 4000);
+        return;
+      }
+      if (newHp !== Math.round(state.minion_hp)) {
+        changes.push(`Minion HP: ${Math.round(state.minion_hp)} → ${newHp} (one-round-clearable)`);
+        state.minion_hp = newHp;
       }
     }
 
-    // ── Stage 3: Boss HP — binary search for kill rate = killRateTarget ────
+    // ── Stage 3: Boss HP — binary search for median TTK = targetRound ──────
+    // The kill-rate objective (% dying by round N) sets the median well below the target
+    // when variance is high.  Instead we target the median directly: find the highest HP
+    // where the P50 of finite-TTK trials ≈ targetRound.  Kill rate becomes a post-hoc check.
     setStatus("Auto-tuning encounter… Stage 3: boss HP.", 0);
 
-    const simulateKillRate = (hp, trials) => {
-      const metrics = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
-      if (metrics.error) return { killRate: 0, tpk: 1.0, metrics: null };
-      const kr = metrics.ttk.filter(v => Number.isFinite(v) && v <= targetRound).length / metrics.ttk.length;
-      return { killRate: kr, tpk: metrics.tpkProb, metrics };
+    const runSim = (hp, trials) => {
+      const m = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
+      if (m.error) return null;
+      const finite = m.ttk.filter(v => Number.isFinite(v));
+      const med  = finite.length > 0 ? percentile(finite, 50) : Infinity;
+      const p10  = finite.length > 0 ? percentile(finite, 10) : 0;
+      const p90  = finite.length > 0 ? percentile(finite, 90) : 0;
+      const kr   = m.ttk.filter(v => Number.isFinite(v) && v <= targetRound).length / m.ttk.length;
+      return { median: med, band: p90 - p10, tpk: m.tpkProb, killRate: kr, ttk: m.ttk, finite };
+    };
+
+    // Binary-search HP so that median(finiteTTK) ≈ tgtRound.
+    // Higher HP → longer fight → higher median.  "lo" is always a HP where median < tgtRound.
+    const hpSearch = (tgtRound) => {
+      let lo = 1.0, hi = Math.max(10.0, safeFloat(state.boss_hp, 150));
+      // Expand upper bracket until median exceeds target.
+      for (let a = 0; a < 14; a++) {
+        const r = runSim(hi, quickTrials);
+        if (!r || r.median >= tgtRound) break;
+        hi *= 2;
+      }
+      for (let i = 0; i < 22; i++) {
+        const mid = (lo + hi) / 2;
+        const r = runSim(mid, quickTrials);
+        if (!r || r.median < tgtRound) { lo = mid; } else { hi = mid; }
+        if (hi - lo < 1.0) break;
+      }
+      return Math.max(1, Math.round(lo));
     };
 
     const oldBossHp = safeFloat(state.boss_hp, 150);
-    let low  = 1.0;
-    let high = Math.max(10.0, oldBossHp);
+    let tunedHp = hpSearch(targetRound);
 
-    if (simulateKillRate(low, quickTrials).killRate < killRateTarget) {
-      // Even HP=1 can't hit target — report what we have so far but abort HP tune.
-      state.enc_trials = originalTrials;
-      syncControlsFromState();
-      persistState();
-      refreshReport();
-      runEncounterAndRender();
-      const partialMsg = changes.length ? `Applied:\n${changes.join("\n")}\n\n` : "";
-      alert(`${partialMsg}Cannot reach ${(killRateTarget * 100).toFixed(0)}% kill rate by round ${targetRound} even at HP 1.\nCheck boss DPR or party configuration.`);
-      setStatus("Auto-tune: HP stage failed — check boss DPR.", 4000);
-      return;
-    }
-
-    let attempts = 0;
-    while (simulateKillRate(high, quickTrials).killRate >= killRateTarget && attempts < 12) {
-      high *= 2;
-      attempts++;
-    }
-
-    for (let i = 0; i < 20; i++) {
-      const mid = (low + high) / 2;
-      if (simulateKillRate(mid, quickTrials).killRate >= killRateTarget) {
-        low = mid;
-      } else {
-        high = mid;
-      }
-      if (Math.abs(low - high) < 1.0) break;
-    }
-
-    let tunedHp     = Math.max(1, Math.round(low));
-    let capAdjusted  = false;
-
-    // TPK cap: if too lethal, pull HP down until TPK is within cap.
-    const atTuned = simulateKillRate(tunedHp, quickTrials);
-    if (atTuned.tpk > tpkCap + 1e-9 && simulateKillRate(1, quickTrials).tpk <= tpkCap + 1e-9) {
-      let capLow = 1, capHigh = tunedHp;
-      while (capLow < capHigh) {
-        const midHp = Math.floor((capLow + capHigh + 1) / 2);
-        if (simulateKillRate(midHp, quickTrials).tpk <= tpkCap + 1e-9) {
-          capLow = midHp;
-        } else {
-          capHigh = midHp - 1;
-        }
-      }
-      tunedHp     = capLow;
-      capAdjusted  = true;
-    }
-
-    // ── Stage 3.5: Tighten p10-p90 band by adjusting DPR CV ───────────────
-    // Re-derive CV from attack structure as the natural floor before trying to reduce it.
+    // ── Stage 3.5: Band tightening ─────────────────────────────────────────
+    // Step A: Re-derive DPR CV from attack structure (nova mode).
     if (Boolean(state.enc_use_nova)) {
       state.dpr_cv = round2(clamp(computePartyDprCv(), 0.05, 2.0));
     }
-    const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
-    const bandCheck  = runEncounterMc({ boss_hp: tunedHp, enc_trials: quickTrials });
-    if (!bandCheck.error) {
-      const finiteBand = bandCheck.ttk.filter(v => Number.isFinite(v));
-      if (finiteBand.length >= 10) {
-        const actualBand = percentile(finiteBand, 90) - percentile(finiteBand, 10);
-        if (actualBand > bandTarget + 0.05) {
-          const currentCv = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
-          // Proportional estimate: band scales linearly with CV (same HP and DPR).
-          const neededCv = Math.max(0.10, currentCv * bandTarget / actualBand);
-          if (neededCv < currentCv - 0.01) {
-            const oldCv    = currentCv;
-            state.dpr_cv   = Math.round(neededCv * 100) / 100;
-            // Re-run HP binary search with new CV so kill rate stays on target.
-            let bLow = 1.0, bHigh = Math.max(10.0, tunedHp * 1.5);
-            if (simulateKillRate(bLow, quickTrials).killRate >= killRateTarget) {
-              let bAttempts = 0;
-              while (simulateKillRate(bHigh, quickTrials).killRate >= killRateTarget && bAttempts < 10) {
-                bHigh *= 2; bAttempts++;
-              }
-              for (let i = 0; i < 15; i++) {
-                const mid = (bLow + bHigh) / 2;
-                if (simulateKillRate(mid, quickTrials).killRate >= killRateTarget) { bLow = mid; }
-                else { bHigh = mid; }
-                if (Math.abs(bLow - bHigh) < 1.0) break;
-              }
-              tunedHp = Math.max(1, Math.round(bLow));
-            }
-            changes.push(`DPR CV: ${oldCv.toFixed(2)} → ${state.dpr_cv.toFixed(2)} (band ${actualBand.toFixed(1)}R → target ≤${bandTarget.toFixed(1)}R)`);
-          }
+
+    const getBand = (hp) => {
+      const r = runSim(hp, quickTrials);
+      return r ? r.band : Infinity;
+    };
+
+    let actualBand = getBand(tunedHp);
+
+    // Step B: Reduce DPR CV proportionally if band exceeds target.
+    if (actualBand > bandTarget + 0.05) {
+      const currentCv = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
+      const neededCv  = Math.max(0.10, currentCv * bandTarget / actualBand);
+      if (neededCv < currentCv - 0.01) {
+        const oldCv = currentCv;
+        state.dpr_cv = Math.round(neededCv * 100) / 100;
+        tunedHp    = hpSearch(targetRound);
+        actualBand = getBand(tunedHp);
+        changes.push(`DPR CV: ${oldCv.toFixed(2)} → ${state.dpr_cv.toFixed(2)} (tightening variance)`);
+      }
+    }
+
+    // Step C: If band is still too wide, adjust target rounds within [5, 10].
+    // Band scales linearly with target rounds (band ≈ rounds × CV_party × 2.563).
+    // To satisfy band ≤ bandTarget: maxRounds = bandTarget / (CV_party × 2.563).
+    if (actualBand > bandTarget + 0.05) {
+      const cvPartyEst      = actualBand / (Math.max(1, targetRound) * 2.563);
+      const maxRoundsForBand = cvPartyEst > 0
+        ? Math.floor(bandTarget / (cvPartyEst * 2.563))
+        : targetRound;
+      const newTarget = clamp(maxRoundsForBand, 5, 10);
+      if (newTarget !== targetRound) {
+        const oldTarget = targetRound;
+        targetRound     = newTarget;
+        state.pacing_rounds = newTarget;
+        tunedHp    = hpSearch(targetRound);
+        actualBand = getBand(tunedHp);
+        changes.push(`Target rounds: ${oldTarget} → ${newTarget} (needed for band ≤${bandTarget.toFixed(1)}R)`);
+      }
+      // If still over band even at 5 rounds, leave as-is and report it — it's a physics limit.
+    }
+
+    // ── Stage 4: TPK cap check ─────────────────────────────────────────────
+    let capAdjusted = false;
+    const atTuned = runSim(tunedHp, quickTrials);
+    if (atTuned && atTuned.tpk > tpkCap + 1e-9) {
+      const atOne = runSim(1, quickTrials);
+      if (atOne && atOne.tpk <= tpkCap + 1e-9) {
+        let capLo = 1, capHi = tunedHp;
+        while (capLo < capHi) {
+          const midHp = Math.floor((capLo + capHi + 1) / 2);
+          const r = runSim(midHp, quickTrials);
+          if (!r || r.tpk <= tpkCap + 1e-9) { capLo = midHp; } else { capHi = midHp - 1; }
         }
+        tunedHp     = capLo;
+        capAdjusted = true;
       }
     }
 
     if (Math.abs(tunedHp - Math.round(oldBossHp)) > 0) {
       changes.push(`Boss HP: ${Math.round(oldBossHp)} → ${tunedHp}`);
+    }
+    if (targetRound !== origTarget) {
+      // Already pushed above; also update the UI control.
     }
     state.boss_hp    = tunedHp;
     state.enc_trials = originalTrials;
@@ -1356,12 +1374,17 @@
     persistState();
     refreshReport();
 
-    // ── Stage 4: Final render + summary ────────────────────────────────────
+    // ── Stage 5: Final render + summary ────────────────────────────────────
     const finalMetrics = runEncounterAndRender();
     if (finalMetrics && !finalMetrics.error) {
       const finiteTtk = finalMetrics.ttk.filter(v => Number.isFinite(v));
-      const finalMed  = finiteTtk.length ? percentile(finiteTtk, 50).toFixed(2) : "N/A";
-      const finalKr   = (100 * finiteTtk.filter(v => v <= targetRound).length / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
+      const finalMed  = finiteTtk.length ? percentile(finiteTtk, 50).toFixed(1) : "N/A";
+      const finalP10  = finiteTtk.length ? percentile(finiteTtk, 10).toFixed(1) : "N/A";
+      const finalP90  = finiteTtk.length ? percentile(finiteTtk, 90).toFixed(1) : "N/A";
+      const finalBand = finiteTtk.length
+        ? (percentile(finiteTtk, 90) - percentile(finiteTtk, 10)).toFixed(1) : "N/A";
+      const finalKr   = (100 * finiteTtk.filter(v => v <= targetRound).length
+        / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
       const finalTpk  = finalMetrics.tpkProb;
 
       if (changes.length === 0) {
@@ -1370,16 +1393,21 @@
       }
 
       const tpkLine = finalTpk > tpkCap + 1e-9
-        ? `\n⚠ TPK ${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}% — reduce boss DPR.`
+        ? `\n⚠ TPK ${(100 * finalTpk).toFixed(1)}% exceeds cap — reduce boss damage.`
         : `\nTPK: ${(100 * finalTpk).toFixed(1)}% ✓`;
-      const capLine = capAdjusted ? "\n(Boss HP capped to keep TPK within limit.)" : "";
+      const krWarn = parseFloat(finalKr) < killRateTarget * 100 - 2
+        ? `\n⚠ Kill rate by round ${targetRound}: ${finalKr}% (below ${(killRateTarget * 100).toFixed(0)}% target)`
+        : `\nKill rate by round ${targetRound}: ${finalKr}% ✓`;
+      const capLine  = capAdjusted ? "\n(Boss HP reduced to keep TPK within cap.)" : "";
+      const bandWarn = parseFloat(finalBand) > bandTarget + 0.5
+        ? `\n⚠ Band ${finalBand}R exceeds target ${bandTarget}R — party damage variance is a physics limit.`
+        : "";
 
       alert(
         `Auto-tune complete — ${changes.length} change(s):\n` +
         changes.map(c => `  • ${c}`).join("\n") +
-        `\n\nKill rate by round ${targetRound}: ${finalKr}%` +
-        `\nMedian TTK (kills): ${finalMed}R` +
-        tpkLine + capLine
+        `\n\nMedian TTK: ${finalMed}R  |  p10–p90: ${finalP10}–${finalP90}R  |  Band: ${finalBand}R` +
+        krWarn + tpkLine + capLine + bandWarn
       );
       setStatus(`Auto-tune complete. ${changes.length} parameter(s) updated.`, 5000);
     } else {
