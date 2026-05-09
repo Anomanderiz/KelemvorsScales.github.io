@@ -125,6 +125,7 @@
       parser: (v) => normalizeRollMode(v),
     },
     { key: "Target AC", label: "Target AC", type: "number", readOnly: true },
+    { key: "Crit", label: "Crit ≥", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
     { key: "Crit Ratio", label: "Crit Ratio", type: "number", step: "0.01", parser: (v) => Math.max(0, safeFloat(v, 1.5)) },
     { key: "Save DC", label: "Save DC", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 16)) },
     { key: "Target Save Bonus", label: "Save Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
@@ -135,7 +136,8 @@
   const ATTACK_COLUMNS = [
     { key: "Name", label: "Name", type: "text", parser: (v) => String(v).trim() },
     { key: "Type", label: "Type", type: "select", options: ["attack", "save"], parser: (v) => (String(v).toLowerCase() === "save" ? "save" : "attack") },
-    { key: "Attack bonus", label: "Attack bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Attack bonus", label: "Atk Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Crit", label: "Crit ≥", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
