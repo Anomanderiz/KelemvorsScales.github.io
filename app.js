@@ -3130,6 +3130,7 @@
         "Atk Bonus": safeInt(nRow["Atk Bonus"], 7),
         "Roll Mode": normalizeRollMode(nRow["Roll Mode"]),
         "Target AC": bossAc,
+        "Crit": Math.max(2, Math.min(20, safeInt(nRow["Crit"], 20))),
         "Crit Ratio": Math.max(0, safeFloat(nRow["Crit Ratio"], 1.5)),
         "Save DC": Math.max(1, safeInt(nRow["Save DC"], 16)),
         "Target Save Bonus": safeInt(nRow["Target Save Bonus"], 0),
