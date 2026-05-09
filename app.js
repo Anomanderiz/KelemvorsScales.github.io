@@ -488,7 +488,7 @@
     bindControl("tuneBandMax",   "tune_band_max",      (el) => Math.max(0.5, safeFloat(el.value, 3.0)));
 
     bindControl("pacingRounds", "pacing_rounds", (el) => {
-      const rounds = Math.max(1, safeInt(el.value, 5));
+      const rounds = clamp(safeInt(el.value, 5), 5, 10);
       state.tune_target_median = rounds;
       return rounds;
     });
@@ -853,16 +853,16 @@
     if (useNova) {
       const { total, rows } = buildNovaEffRows();
       renderResultTable(els.effTable, rows);
-      updateTtdLabels(total);
+      updateTtdLabels(total, true);
       return;
     }
 
     const totalDpr = state.party_dpr_table.reduce((acc, row) => acc + averageDamage(row.Damage || "1d6"), 0);
     renderResultTable(els.effTable, state.party_dpr_table.map((row) => ({ Member: row.Member, "Avg/Attack": round2(averageDamage(row.Damage || "1d6")), "Formula": row.Damage || "1d6" })));
-    updateTtdLabels(totalDpr);
+    updateTtdLabels(totalDpr, false);
   }
 
-  function updateTtdLabels(totalDpr) {
+  function updateTtdLabels(totalDpr, useNova = Boolean(state.enc_use_nova)) {
     const resist    = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
     const regen     = Math.max(0, safeFloat(state.boss_regen, 0.0));
     // effective = how much boss HP the party removes per round (after resist/regen).
@@ -871,7 +871,7 @@
 
     // Minion phase: pass raw totalDpr — resist/regen are boss properties, not minion properties.
     // computeMinionPhase applies resist/regen only to boss-overflow damage.
-    const minionPhase = computeMinionPhase(totalDpr);
+    const minionPhase = computeMinionPhase(totalDpr, useNova);
     renderMinionTtdTable(minionPhase);
 
     let exact;
@@ -1179,7 +1179,7 @@
       const m = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
       if (m.error) return null;
       const finite = m.ttk.filter(v => Number.isFinite(v));
-      const med  = finite.length > 0 ? percentile(finite, 50) : Infinity;
+      const med  = percentile(m.ttk, 50);
       const p10  = finite.length > 0 ? percentile(finite, 10) : 0;
       const p90  = finite.length > 0 ? percentile(finite, 90) : 0;
       const kr   = m.ttk.filter(v => Number.isFinite(v) && v <= targetRound).length / m.ttk.length;
@@ -1209,11 +1209,6 @@
     let tunedHp = hpSearch(targetRound);
 
     // ── Stage 3.5: Band tightening ─────────────────────────────────────────
-    // Step A: Re-derive DPR CV from attack structure (nova mode).
-    if (Boolean(state.enc_use_nova)) {
-      state.dpr_cv = round2(clamp(computePartyDprCv(), 0.05, 2.0));
-    }
-
     const getBand = (hp) => {
       const r = runSim(hp, quickTrials);
       return r ? r.band : Infinity;
@@ -1222,7 +1217,7 @@
     let actualBand = getBand(tunedHp);
 
     // Step B: Reduce DPR CV proportionally if band exceeds target.
-    if (actualBand > bandTarget + 0.05) {
+    if (!Boolean(state.enc_use_nova) && actualBand > bandTarget + 0.05) {
       const currentCv = clamp(safeFloat(state.dpr_cv, 0.6), 0.05, 2.0);
       const neededCv  = Math.max(0.10, currentCv * bandTarget / actualBand);
       if (neededCv < currentCv - 0.01) {
@@ -1258,7 +1253,41 @@
     let capAdjusted = false;
     const atTuned = runSim(tunedHp, quickTrials);
     if (atTuned && atTuned.tpk > tpkCap + 1e-9) {
-      const atOne = runSim(1, quickTrials);
+      const oldMult = bossDprMultiplier(state);
+      const atZeroPressure = runEncounterMc({
+        boss_hp: Math.max(1, Math.round(tunedHp)),
+        enc_trials: quickTrials,
+        boss_dpr_mult: 0,
+      });
+
+      if (!atZeroPressure.error && atZeroPressure.tpkProb <= tpkCap + 1e-9 && oldMult > 0) {
+        let multLo = 0;
+        let multHi = oldMult;
+        for (let i = 0; i < 18; i += 1) {
+          const mid = (multLo + multHi) / 2;
+          const r = runEncounterMc({
+            boss_hp: Math.max(1, Math.round(tunedHp)),
+            enc_trials: quickTrials,
+            boss_dpr_mult: mid,
+          });
+          if (!r.error && r.tpkProb <= tpkCap + 1e-9) {
+            multLo = mid;
+          } else {
+            multHi = mid;
+          }
+        }
+
+        const newMult = round2(clamp(multLo, 0, 20));
+        if (newMult < oldMult - 0.01) {
+          state.boss_dpr_mult = newMult;
+          tunedHp = hpSearch(targetRound);
+          capAdjusted = true;
+          changes.push(`Boss DPR mult: ${oldMult.toFixed(2)}x -> ${newMult.toFixed(2)}x (TPK cap)`);
+        }
+      }
+
+      const afterPressure = runSim(tunedHp, quickTrials);
+      const atOne = afterPressure && afterPressure.tpk > tpkCap + 1e-9 ? runSim(1, quickTrials) : null;
       if (atOne && atOne.tpk <= tpkCap + 1e-9) {
         let capLo = 1, capHi = tunedHp;
         while (capLo < capHi) {
@@ -1307,7 +1336,7 @@
       const krWarn = parseFloat(finalKr) < killRateTarget * 100 - 2
         ? `\n⚠ Kill rate by round ${targetRound}: ${finalKr}% (below ${(killRateTarget * 100).toFixed(0)}% target)`
         : `\nKill rate by round ${targetRound}: ${finalKr}% ✓`;
-      const capLine  = capAdjusted ? "\n(Boss HP reduced to keep TPK within cap.)" : "";
+      const capLine  = capAdjusted ? "\n(Boss pressure constrained to keep TPK within cap.)" : "";
       const bandWarn = parseFloat(finalBand) > bandTarget + 0.5
         ? `\n⚠ Band ${finalBand}R exceeds target ${bandTarget}R — party damage variance is a physics limit.`
         : "";
@@ -1396,7 +1425,7 @@
         if (opts.lair_enabled && rnd % Math.max(1, safeInt(opts.lair_every_n, 1)) === 0) {
           const pTarget = Math.min(1, safeFloat(opts.lair_targets, 1) / spreadTargets);
           if (Math.random() < pTarget) {
-            roundDamage += gammaRng(Math.max(0, safeFloat(opts.lair_avg, 0)), 0.5);
+            roundDamage += rollDamageOne(opts.lair_formula || damageFormulaForAverage(opts.lair_avg, 6));
           }
         }
 
@@ -1404,7 +1433,7 @@
           const pRech = parseRecharge(opts.recharge_text || "5-6");
           const pTarget = Math.min(1, safeFloat(opts.rech_targets, 1) / spreadTargets);
           if (Math.random() < pRech && Math.random() < pTarget) {
-            roundDamage += gammaRng(Math.max(0, safeFloat(opts.rech_avg, 0)), 0.5);
+            roundDamage += rollDamageOne(opts.rech_formula || damageFormulaForAverage(opts.rech_avg, 6));
           }
         }
 
@@ -1436,8 +1465,10 @@
 
     const attacks = attacksEnabledFromTable(state.attacks_table);
     const mechanics = phaseMechanicsEnabledFromTable(opts.phase_table);
-    if (!attacks.length && !mechanics.length && !opts.lair_enabled && !opts.rech_enabled) {
-      return { error: "Enable at least one attack, round mechanic, lair action, or recharge power." };
+    const hasMinionDamage = Math.max(0, safeInt(opts.minion_count, 0)) > 0
+      && (Boolean(opts.minion_atk_enabled) || Boolean(opts.minion_save_enabled));
+    if (!attacks.length && !mechanics.length && !opts.lair_enabled && !opts.rech_enabled && !hasMinionDamage) {
+      return { error: "Enable at least one attack, round mechanic, lair action, recharge power, or damaging minion pack." };
     }
 
     const trials = Math.max(1, safeInt(opts.enc_trials, 10000));
@@ -1490,13 +1521,52 @@
     const mcMinionPoolHp = mcHasMinionPack
       ? new Array(trials).fill(mcMinionCount * mcMinionHpEach)
       : null;
-    // Per-PC expected DPR from ONE minion (used in MC damage block; scaled by alive minion count)
-    const mcMinionOneDprPerPc = mcHasMinionPack
-      ? party.map((pc) => minionOneDprVsPc(pc))
-      : null;
     const mcMinionHasDmg = mcHasMinionPack
       && (Boolean(opts.minion_atk_enabled) || Boolean(opts.minion_save_enabled));
     // ──────────────────────────────────────────────────────────────────────
+
+    const applyPartyPhase = (t, roundNumber) => {
+      let bossRawDamage = 0;
+
+      if (useNova) {
+        const bossAc = Math.max(1, safeInt(opts.boss_ac, 16));
+        for (let j = 0; j < P; j += 1) {
+          if (!pcsAlive[t][j]) continue;
+          const minionHpLeft = mcHasMinionPack ? mcMinionPoolHp[t] : 0;
+          const split = sampleNovaActionSplit(partyNames[j], minionHpLeft, bossAc, mcMinionAc);
+          if (mcHasMinionPack) {
+            mcMinionPoolHp[t] = split.minionPoolHp;
+          }
+          bossRawDamage += split.bossRaw;
+        }
+      } else {
+        let rawPartyDpr = 0;
+        for (let j = 0; j < P; j += 1) {
+          if (!pcsAlive[t][j]) continue;
+          rawPartyDpr += gammaRng(effMeans[j], dprCv);
+        }
+
+        if (mcHasMinionPack && mcMinionPoolHp[t] > 0) {
+          const dprToMinions = rawPartyDpr * mcMinionHitRatio;
+          const prevHp = mcMinionPoolHp[t];
+          mcMinionPoolHp[t] = Math.max(0, prevHp - dprToMinions);
+          if (mcMinionPoolHp[t] === 0 && dprToMinions > prevHp) {
+            bossRawDamage += rawPartyDpr * ((dprToMinions - prevHp) / dprToMinions);
+          }
+        } else {
+          bossRawDamage += rawPartyDpr;
+        }
+      }
+
+      if (bossRawDamage > 0) {
+        bossHp[t] -= Math.max(0, bossRawDamage / resist - regen);
+      }
+
+      if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
+        ttk[t] = roundNumber;
+        pcsDownAtVictory[t] = pcsAlive[t].reduce((acc, alive) => acc + (alive ? 0 : 1), 0);
+      }
+    };
 
     for (let rnd = 1; rnd <= maxRounds; rnd += 1) {
       // Replenishing minions: reset each trial's pool at the top of every round.
@@ -1520,30 +1590,7 @@
       for (let t = 0; t < trials; t += 1) {
         if (Number.isFinite(ttk[t])) continue;
         if (bossFirstFlags[t]) continue;
-
-        let rawPartyDpr = 0;
-        for (let j = 0; j < P; j += 1) {
-          if (!pcsAlive[t][j]) continue;
-          rawPartyDpr += gammaRng(effMeans[j], dprCv);
-        }
-
-        if (mcHasMinionPack && mcMinionPoolHp[t] > 0) {
-          const dprToMinions = rawPartyDpr * mcMinionHitRatio;
-          const prevHp       = mcMinionPoolHp[t];
-          mcMinionPoolHp[t]  = Math.max(0, prevHp - dprToMinions);
-          if (mcMinionPoolHp[t] === 0 && dprToMinions > prevHp) {
-            const overflowFrac  = (dprToMinions - prevHp) / dprToMinions;
-            const overflowBoss  = Math.max(0, rawPartyDpr * overflowFrac / resist - regen);
-            bossHp[t] -= overflowBoss;
-          }
-        } else {
-          bossHp[t] -= Math.max(0, rawPartyDpr / resist - regen);
-        }
-
-        if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
-          ttk[t] = rnd;
-          pcsDownAtVictory[t] = pcsAlive[t].reduce((acc, alive) => acc + (alive ? 0 : 1), 0);
-        }
+        applyPartyPhase(t, rnd);
       }
 
       for (let t = 0; t < trials; t += 1) {
@@ -1657,7 +1704,7 @@
             const L = Math.min(Math.max(1, safeInt(opts.lair_targets, 1)), aliveNow.length);
             const targets = sampleWithoutReplacement(aliveNow, L);
             for (const idx of targets) {
-              applyDamage(idx, Math.max(0, gammaRng(Math.max(0, safeFloat(opts.lair_avg, 0)), 0.5) * dprMult));
+              applyDamage(idx, Math.max(0, rollDamageOne(opts.lair_formula || damageFormulaForAverage(opts.lair_avg, 6)) * dprMult));
             }
           }
         }
@@ -1670,7 +1717,7 @@
               const R = Math.min(Math.max(1, safeInt(opts.rech_targets, 1)), aliveNow.length);
               const targets = sampleWithoutReplacement(aliveNow, R);
               for (const idx of targets) {
-                applyDamage(idx, Math.max(0, gammaRng(Math.max(0, safeFloat(opts.rech_avg, 0)), 0.5) * dprMult));
+                applyDamage(idx, Math.max(0, rollDamageOne(opts.rech_formula || damageFormulaForAverage(opts.rech_avg, 6)) * dprMult));
               }
             }
           }
@@ -1681,9 +1728,12 @@
           aliveNow = aliveIndicesForTrial(pcsAlive[t]);
           if (aliveNow.length) {
             const minionsLeft = Math.ceil(mcMinionPoolHp[t] / mcMinionHpEach);
-            for (const idx of aliveNow) {
-              const dpr = minionsLeft * mcMinionOneDprPerPc[idx] / aliveNow.length;
-              applyDamage(idx, Math.max(0, dpr * dprMult));
+            for (let m = 0; m < minionsLeft; m += 1) {
+              aliveNow = aliveIndicesForTrial(pcsAlive[t]);
+              if (!aliveNow.length) break;
+              const idx = aliveNow[randomInt(0, aliveNow.length - 1)];
+              const raw = sampleMinionDamageVsPc(idx, pcAc, pcSaves, saveIndex, opts);
+              applyDamage(idx, Math.max(0, raw * dprMult));
             }
           }
         }
@@ -1703,30 +1753,7 @@
       for (let t = 0; t < trials; t += 1) {
         if (Number.isFinite(ttk[t])) continue;
         if (!bossFirstFlags[t]) continue;
-
-        let rawPartyDpr = 0;
-        for (let j = 0; j < P; j += 1) {
-          if (!pcsAlive[t][j]) continue;
-          rawPartyDpr += gammaRng(effMeans[j], dprCv);
-        }
-
-        if (mcHasMinionPack && mcMinionPoolHp[t] > 0) {
-          const dprToMinions = rawPartyDpr * mcMinionHitRatio;
-          const prevHp       = mcMinionPoolHp[t];
-          mcMinionPoolHp[t]  = Math.max(0, prevHp - dprToMinions);
-          if (mcMinionPoolHp[t] === 0 && dprToMinions > prevHp) {
-            const overflowFrac = (dprToMinions - prevHp) / dprToMinions;
-            const overflowBoss = Math.max(0, rawPartyDpr * overflowFrac / resist - regen);
-            bossHp[t] -= overflowBoss;
-          }
-        } else {
-          bossHp[t] -= Math.max(0, rawPartyDpr / resist - regen);
-        }
-
-        if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
-          ttk[t] = rnd;
-          pcsDownAtVictory[t] = pcsAlive[t].reduce((acc, alive) => acc + (alive ? 0 : 1), 0);
-        }
+        applyPartyPhase(t, rnd);
       }
     }
 
@@ -1775,7 +1802,7 @@
   let _lastPacingResult = null;
 
   function computePacingResult() {
-    const targetRounds = Math.max(1, safeInt(state.pacing_rounds, 5));
+    const targetRounds = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
 
     // Effective party DPR on the boss
     const useNova = Boolean(state.enc_use_nova);
@@ -1786,7 +1813,7 @@
     const effectivePartyDprOnBoss = Math.max(0, totalPartyDpr / resistFactor - bossRegen);
 
     // Recommended boss HP — minion-aware
-    const minionPhaseInfo = computeMinionPhase(totalPartyDpr);
+    const minionPhaseInfo = computeMinionPhase(totalPartyDpr, useNova);
     let recommendedBossHp;
     if (!minionPhaseInfo) {
       recommendedBossHp = effectivePartyDprOnBoss > 0
@@ -1823,6 +1850,7 @@
     let targetAttackDpr = 0;
     let targetBossDprMult = null;
     let toughestPcName = null;
+    const wipeBudgetRound = targetRounds * 1.35;
     const pcRows = [];
 
     for (const pc of party) {
@@ -1840,8 +1868,10 @@
         lastDownRound = Math.max(lastDownRound, pcTtd);
       }
 
-      // Target total boss pressure so THIS PC dies at exactly targetRounds.
-      const neededNetDpr = pcHp / targetRounds;
+      // Target total boss pressure so deterministic party wipe lands after the
+      // intended fight length. This keeps pressure meaningful without making
+      // "boss dies on target round" equivalent to a deterministic TPK.
+      const neededNetDpr = pcHp / wipeBudgetRound;
       const targetMultForPc = rawIncomingPerPc > 0
         ? Math.max(0, (neededNetDpr + thpAvg) / rawIncomingPerPc)
         : Infinity;
@@ -2020,7 +2050,7 @@
     const bossDprMult = Number.isFinite(r.bossDprMult) ? r.bossDprMult : 1;
     setText(els.pacingTargetDpr, Number.isFinite(r.targetBossDprMult) ? `${r.targetBossDprMult.toFixed(2)}x` : "N/A");
     const currentDprHint = r.toughestPcName
-      ? `current ${bossDprMult.toFixed(2)}x; ${r.toughestPcName} lasts ${r.targetRounds}R`
+      ? `current ${bossDprMult.toFixed(2)}x; ${r.toughestPcName} wipe budget ${(r.targetRounds * 1.35).toFixed(1)}R`
       : "no boss damage";
     setText(els.pacingTargetDprSub, currentDprHint);
 
@@ -2157,17 +2187,46 @@
     return members.reduce((acc, pc) => acc + minionOneDprVsPc(pc), 0) / members.length;
   }
 
+  function sampleMinionDamageVsPc(pcIndex, pcAc, pcSaves, saveIndex, opts) {
+    let raw = 0;
+
+    if (opts.minion_atk_enabled) {
+      const ac = Math.max(1, safeInt(pcAc[pcIndex], 10));
+      const atkBonus = safeInt(opts.minion_atk_bonus, 4);
+      const roll = randomInt(1, 20);
+      const hit = roll === 20 || (roll !== 1 && roll + atkBonus >= ac);
+      if (hit) {
+        raw += Math.max(0, safeFloat(opts.minion_atk_avg, 5));
+      }
+    }
+
+    if (opts.minion_save_enabled) {
+      const stat = String(opts.minion_save_stat || "DEX").toUpperCase();
+      const saveIdx = saveIndex[stat] ?? saveIndex.DEX;
+      const bonus = pcSaves[pcIndex][saveIdx];
+      const dc = Math.max(1, safeInt(opts.minion_save_dc, 13));
+      const roll = randomInt(1, 20);
+      const success = roll === 20 || (roll !== 1 && roll + bonus >= dc);
+      const avg = Math.max(0, safeFloat(opts.minion_save_avg, 7));
+      raw += success ? 0.5 * avg : avg;
+    }
+
+    return raw;
+  }
+
   // Round-by-round minion-phase simulation (deterministic, focus-fire model).
   // Returns null when no minions are configured.
-  function computeMinionPhase(rawPartyDpr) {
+  function computeMinionPhase(rawPartyDpr, useNova = Boolean(state.enc_use_nova)) {
     const count    = Math.max(0, safeInt(state.minion_count, 0));
     const hpEach   = Math.max(1, safeFloat(state.minion_hp, 15));
     const mAc      = Math.max(1, safeInt(state.minion_ac, 14));
     const dprEach  = minionDprEachAvg();
     if (count <= 0) return null;
 
-    const ratio             = minionHitRatio(mAc, Math.max(1, safeInt(state.boss_ac, 16)));
-    const partyDprVsMinions = rawPartyDpr * ratio;
+    const partyDprVsMinions = expectedPartyDprVsEnemy(useNova, mAc);
+    const ratio             = rawPartyDpr > 1e-9
+      ? partyDprVsMinions / rawPartyDpr
+      : Number.POSITIVE_INFINITY;
     const resist            = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
     const regen             = Math.max(0, safeFloat(state.boss_regen, 0.0));
     const replenish         = Boolean(state.minion_replenish);
@@ -2307,7 +2366,26 @@
     return out;
   }
 
-  function computeNovaConversion(novaRow, dprRow, fallbackBossAc) {
+  function expectedPartyDprVsEnemy(useNova, targetAc, targetSaveBonus = null) {
+    if (!useNova) {
+      const bossAc = Math.max(1, safeInt(state.boss_ac, 16));
+      const ratio = minionHitRatio(Math.max(1, safeInt(targetAc, bossAc)), bossAc);
+      return state.party_dpr_table.reduce((acc, row) => {
+        return acc + averageDamage(row.Damage || "1d6") * ratio;
+      }, 0);
+    }
+
+    let total = 0;
+    for (const row of state.party_nova_table) {
+      const saveBonus = targetSaveBonus == null
+        ? safeInt(row["Target Save Bonus"], 0)
+        : safeInt(targetSaveBonus, 0);
+      total += computeNovaConversion(row, dprRowFor(row.Member), targetAc, saveBonus).effDpr;
+    }
+    return total;
+  }
+
+  function computeNovaConversion(novaRow, dprRow, fallbackBossAc, overrideSaveBonus = null) {
     const row    = novaRow;
     const method = normalizeNovaMethod(row.Method);
     const mode   = normalizeRollMode(row["Roll Mode"]);
@@ -2321,7 +2399,7 @@
 
     if (method === "attack") {
       const atkBonus      = safeInt(row["Atk Bonus"], 0);
-      const targetAc      = Math.max(1, safeInt(row["Target AC"], fallbackBossAc));
+      const targetAc      = Math.max(1, safeInt(fallbackBossAc, safeInt(row["Target AC"], 16)));
       const critRatio     = Math.max(0, safeFloat(row["Crit Ratio"], 1.5));
       const critThreshold = Math.max(2, Math.min(20, safeInt(row["Crit"], 20)));
       const [pNon, crit, pAny] = hitProbs(targetAc, atkBonus, mode, critThreshold);
@@ -2330,7 +2408,9 @@
       baseFactor = pNon + critRatio * pCrit;
     } else if (method === "save_half") {
       const saveDc = Math.max(1, safeInt(row["Save DC"], 16));
-      const targetSaveBonus = safeInt(row["Target Save Bonus"], 0);
+      const targetSaveBonus = overrideSaveBonus == null
+        ? safeInt(row["Target Save Bonus"], 0)
+        : safeInt(overrideSaveBonus, 0);
       const onSaveMult = clamp(safeFloat(row["Save Success Mult"], 0.5), 0, 1);
       const pFail = pSaveFailWithMode(saveDc, targetSaveBonus, mode);
       pMain = pFail;
@@ -2350,9 +2430,72 @@
     };
   }
 
-  // Derives the per-PC DPR CV used in runEncounterMc (gammaRng per PC).
-  //
-  // The simulation draws gammaRng(effMean_j, dprCv) for each PC independently.
+  function sampleNovaActionSplit(memberName, minionPoolHp, bossAc, minionAc) {
+    const row = state.party_nova_table.find((r) => String(r.Member || "") === String(memberName || ""));
+    if (!row) {
+      return { bossRaw: 0, minionPoolHp };
+    }
+
+    const dprRow = dprRowFor(row.Member);
+    const attacks = Math.max(1, safeInt(row["Attacks"], 1));
+    const uptime = clamp(safeFloat(row.Uptime, 0.85), 0, 1);
+    let remainingMinionHp = Math.max(0, safeFloat(minionPoolHp, 0));
+    let bossRaw = 0;
+
+    if (Math.random() > uptime) {
+      return { bossRaw, minionPoolHp: remainingMinionHp };
+    }
+
+    for (let i = 0; i < attacks; i += 1) {
+      const targetMinion = remainingMinionHp > 0;
+      const targetAc = targetMinion ? minionAc : bossAc;
+      const dmg = sampleNovaAttackDamage(row, dprRow, targetAc);
+
+      if (targetMinion) {
+        remainingMinionHp = Math.max(0, remainingMinionHp - dmg);
+      } else {
+        bossRaw += dmg;
+      }
+    }
+
+    return { bossRaw, minionPoolHp: remainingMinionHp };
+  }
+
+  function sampleNovaAttackDamage(novaRow, dprRow, targetAc) {
+    const method = normalizeNovaMethod(novaRow.Method);
+    const expr = (dprRow && dprRow.Damage) || "1d6";
+
+    if (method === "auto_hit") {
+      return rollDamageOne(expr);
+    }
+
+    if (method === "save_half") {
+      const dc = Math.max(1, safeInt(novaRow["Save DC"], 16));
+      const saveBonus = safeInt(novaRow["Target Save Bonus"], 0);
+      const saveRoll = rollD20Mode(normalizeRollMode(novaRow["Roll Mode"]));
+      const success = saveRoll === 20 || (saveRoll !== 1 && saveRoll + saveBonus >= dc);
+      const dmg = rollDamageOne(expr);
+      const saveMult = clamp(safeFloat(novaRow["Save Success Mult"], 0.5), 0, 1);
+      return success ? dmg * saveMult : dmg;
+    }
+
+    const roll = rollD20Mode(normalizeRollMode(novaRow["Roll Mode"]));
+    const critThreshold = Math.max(2, Math.min(20, safeInt(novaRow["Crit"], 20)));
+    const atkBonus = safeInt(novaRow["Atk Bonus"], 0);
+    const isCrit = roll >= critThreshold;
+    const isHit = isCrit || (roll !== 1 && roll + atkBonus >= Math.max(1, safeInt(targetAc, 16)));
+    if (!isHit) return 0;
+
+    const dmg = rollDamageOne(expr);
+    if (!isCrit) return dmg;
+
+    const critRatio = Math.max(0, safeFloat(novaRow["Crit Ratio"], 1.5));
+    return dmg * critRatio;
+  }
+
+  // Derives the per-PC DPR CV for the manual-DPR fallback model.
+  // Nova-mode encounter MC rolls each captured attack directly; manual mode
+  // still draws gammaRng(effMean_j, dprCv) for each PC independently.
   // When N such draws are summed, the party total has:
   //   CV_party_sim = dprCv × sqrt(Σ effMean²) / Σ effMean
   //
@@ -3108,7 +3251,7 @@
     base.tune_kill_rate = clamp(safeFloat(base.tune_kill_rate, 0.75), 0.50, 0.95);
     base.tune_band_max  = Math.max(0.5, safeFloat(base.tune_band_max, 3.0));
 
-    base.pacing_rounds = Math.max(1, safeInt(base.pacing_rounds, 5));
+    base.pacing_rounds = clamp(safeInt(base.pacing_rounds, 5), 5, 10);
 
     base.minion_count     = Math.max(0, safeInt(base.minion_count, 0));
     base.minion_ac        = Math.max(1, safeInt(base.minion_ac, 14));
@@ -3314,6 +3457,13 @@
       copy[j] = tmp;
     }
     return copy.slice(0, k);
+  }
+
+  function rollD20Mode(mode = "normal") {
+    const r1 = randomInt(1, 20);
+    if (mode === "normal") return r1;
+    const r2 = randomInt(1, 20);
+    return mode === "adv" ? Math.max(r1, r2) : Math.min(r1, r2);
   }
 
   function randomInt(min, max) {
