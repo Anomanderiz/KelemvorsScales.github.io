@@ -18,16 +18,16 @@
       { Name: "Fire Breath", Type: "save",   "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6",    "Uses/round": 1, "Melee?": false, "Enabled?": true },
     ],
     party_dpr_table: [
-      { Member: "Fighter", DPR: 18.0 },
-      { Member: "Rogue",   DPR: 22.0 },
-      { Member: "Cleric",  DPR: 12.0 },
-      { Member: "Wizard",  DPR: 24.0 },
+      { Member: "Fighter", Damage: "1d8+5" },
+      { Member: "Rogue",   Damage: "3d6+5" },
+      { Member: "Cleric",  Damage: "1d8+3" },
+      { Member: "Wizard",  Damage: "4d6" },
     ],
     party_nova_table: [
-      { Member: "Fighter", "Nova DPR": 18.0, Method: "attack",    "Attacks": 2, "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
-      { Member: "Rogue",   "Nova DPR": 22.0, Method: "attack",    "Attacks": 1, "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
-      { Member: "Cleric",  "Nova DPR": 12.0, Method: "attack",    "Attacks": 1, "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
-      { Member: "Wizard",  "Nova DPR": 24.0, Method: "save_half", "Attacks": 1, "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Fighter", Method: "attack",    "Attacks": 2, "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
+      { Member: "Rogue",   Method: "attack",    "Attacks": 1, "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Cleric",  Method: "attack",    "Attacks": 1, "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
+      { Member: "Wizard",  Method: "save_half", "Attacks": 1, "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
     ],
 
     mode_select: "normal",
@@ -103,12 +103,11 @@
 
   const DPR_COLUMNS = [
     { key: "Member", label: "Member", type: "text", readOnly: true },
-    { key: "DPR", label: "DPR", type: "number", step: "0.1", min: "0", parser: (v) => Math.max(0, safeFloat(v, 0.0)) },
+    { key: "Damage", label: "Dmg/Attack", type: "text", parser: (v) => String(v).trim() || "1d6" },
   ];
 
   const NOVA_COLUMNS = [
     { key: "Member", label: "Member", type: "text", readOnly: true },
-    { key: "Nova DPR", label: "Nova DPR", type: "number", readOnly: true },
     {
       key: "Method",
       label: "Method",
@@ -661,6 +660,7 @@
         state.party_dpr_table[rowIndex][key] = value;
         state.party_dpr_table[rowIndex] = sanitizeDprRow(state.party_dpr_table[rowIndex]);
         syncPartyDependentRows(state);
+        refreshDerivedCv();
         persistState();
         renderPartySection();
         refreshEffTableFromMode();
@@ -857,8 +857,8 @@
       return;
     }
 
-    const totalDpr = state.party_dpr_table.reduce((acc, row) => acc + safeFloat(row.DPR, 0), 0);
-    renderResultTable(els.effTable, state.party_dpr_table.map((row) => ({ Member: row.Member, DPR: round2(safeFloat(row.DPR, 0)) })));
+    const totalDpr = state.party_dpr_table.reduce((acc, row) => acc + averageDamage(row.Damage || "1d6"), 0);
+    renderResultTable(els.effTable, state.party_dpr_table.map((row) => ({ Member: row.Member, "Avg/Attack": round2(averageDamage(row.Damage || "1d6")), "Formula": row.Damage || "1d6" })));
     updateTtdLabels(totalDpr);
   }
 
@@ -2329,16 +2329,23 @@
 
   // ── End Minion helpers ────────────────────────────────────────────────────
 
+  function dprRowFor(memberName) {
+    return state.party_dpr_table.find(r => r.Member === memberName) || { Damage: "1d6" };
+  }
+
   function buildNovaEffRows() {
     let total = 0;
     const rows = [];
 
     for (const row of state.party_nova_table) {
-      const conv = computeNovaConversion(row, state.boss_ac);
+      const dprRow = dprRowFor(row.Member);
+      const conv = computeNovaConversion(row, dprRow, state.boss_ac);
       total += conv.effDpr;
 
       rows.push({
         Member: row.Member || "?",
+        "Dmg/Atk": round2(conv.avgDmg),
+        Attacks: conv.attacks,
         Method: conv.method,
         "P(main)%": (100 * conv.pMain).toFixed(1),
         "P(crit)%": (100 * conv.pCrit).toFixed(1),
@@ -2352,21 +2359,23 @@
 
   function effPartyDprs(useNova) {
     if (!useNova) {
-      return state.party_dpr_table.map((row) => [row.Member || "?", safeFloat(row.DPR, 0)]);
+      return state.party_dpr_table.map((row) => [row.Member || "?", averageDamage(row.Damage || "1d6")]);
     }
 
     const out = [];
     for (const row of state.party_nova_table) {
-      const conv = computeNovaConversion(row, state.boss_ac);
+      const conv = computeNovaConversion(row, dprRowFor(row.Member), state.boss_ac);
       out.push([row.Member || "?", conv.effDpr]);
     }
     return out;
   }
 
-  function computeNovaConversion(row, fallbackBossAc) {
+  function computeNovaConversion(novaRow, dprRow, fallbackBossAc) {
+    const row    = novaRow;
     const method = normalizeNovaMethod(row.Method);
-    const mode = normalizeRollMode(row["Roll Mode"]);
-    const novaDpr = Math.max(0, safeFloat(row["Nova DPR"], 0));
+    const mode   = normalizeRollMode(row["Roll Mode"]);
+    const avgDmg = Math.max(0, averageDamage((dprRow && dprRow.Damage) || "1d6"));
+    const attacks = Math.max(1, safeInt(row["Attacks"], 1));
     const uptime = clamp(safeFloat(row.Uptime, 0.85), 0, 1);
 
     let pMain = 1;
@@ -2398,33 +2407,45 @@
       pMain,
       pCrit,
       factor,
-      effDpr: novaDpr * factor,
+      avgDmg,
+      attacks,
+      effDpr: avgDmg * attacks * factor,
     };
   }
 
-  // Derives party DPR coefficient of variation from nova table attack structure.
-  // CV_pc = sqrt((1-p)/p) / sqrt(N) for attack-type; save formula uses half-damage variance.
-  // Party-wide: sqrt(Σ(effDpr_i × cv_i)²) / Σ effDpr_i (independent PCs).
+  // Derives party DPR CV from nova table attack structure and DPR table damage formulas.
+  // Includes both hit/miss variance and damage dice variance for each PC.
+  // Party-wide: sqrt(Σ varPerPC_i) / Σ effDpr_i (independent PCs).
   function computePartyDprCv() {
     const rows = state.party_nova_table.filter(r => String(r.Member || "").trim());
     if (!rows.length) return 0.6;
     let totalDpr = 0;
     let totalVar = 0;
     for (const row of rows) {
-      const attacks = Math.max(1, safeInt(row["Attacks"], 1));
-      const nova    = computeNovaConversion(row, safeInt(state.boss_ac, 16));
+      const dprRow  = dprRowFor(row.Member);
+      const avgDmg  = Math.max(0, averageDamage(dprRow.Damage || "1d6"));
+      const varDmg  = varianceDamage(dprRow.Damage || "1d6");
+      const nova    = computeNovaConversion(row, dprRow, safeInt(state.boss_ac, 16));
+      const attacks = nova.attacks;
+      const uptime  = clamp(safeFloat(row.Uptime, 0.85), 0, 1);
       const eff     = nova.effDpr;
       if (eff <= 0) continue;
-      let cvPc;
+
+      let varPerAtk;
       if (nova.method === "attack") {
         const p = clamp(nova.pMain, 0.05, 0.95);
-        cvPc = Math.sqrt((1 - p) / p) / Math.sqrt(attacks);
+        // Var[single attack] = p(1-p)·avgDmg² + p·varDmg  (hit/miss × expected damage² + hit × dice variance)
+        varPerAtk = p * (1 - p) * avgDmg * avgDmg + p * varDmg;
       } else {
         const pFail = clamp(nova.pMain, 0.05, 0.95);
-        cvPc = Math.sqrt(pFail * (1 - pFail)) / ((1 + pFail) * Math.sqrt(attacks));
+        // Var[mult] = 0.25·pFail·(1-pFail) where mult is 1 on fail, 0.5 on success
+        const varMult   = 0.25 * pFail * (1 - pFail);
+        const eMult2    = 0.25 + 0.75 * pFail;  // E[mult²]
+        varPerAtk = avgDmg * avgDmg * varMult + eMult2 * varDmg;
       }
+      // Var[round] = attacks × uptime × varPerAtk  (treat uptime as deterministic)
       totalDpr += eff;
-      totalVar += (eff * cvPc) ** 2;
+      totalVar += attacks * uptime * varPerAtk;
     }
     if (totalDpr <= 0) return 0.6;
     return clamp(Math.sqrt(totalVar) / totalDpr, 0.05, 2.0);
@@ -2771,6 +2792,17 @@
       avg += count * ((sides + 1) / 2);
     }
     return Math.max(0, parsed.sign * avg);
+  }
+
+  // Variance of a damage expression's dice terms. Var(XdN) = X·(N²-1)/12.
+  function varianceDamage(expr) {
+    const parsed = parseDamageExpression(expr);
+    let variance = 0;
+    for (const [count, sides] of parsed.dice) {
+      if (sides <= 1) continue;
+      variance += count * (sides * sides - 1) / 12;
+    }
+    return Math.max(0, variance);
   }
 
   function averageCrunchyCritDamage(expr) {
@@ -3157,19 +3189,21 @@
 
     st.party_dpr_table = names.map((name) => {
       const row = dprMap.get(name) || {};
+      let dmg = String(row.Damage || "").trim();
+      if (!dmg && typeof row.DPR === "number" && row.DPR > 0) {
+        dmg = damageFormulaForAverage(row.DPR, 6);
+      }
       return {
         Member: name,
-        DPR: Math.max(0, safeFloat(row.DPR, 10.0)),
+        Damage: dmg || "1d6",
       };
     });
 
     const bossAc = Math.max(1, safeInt(st.boss_ac, 16));
     st.party_nova_table = names.map((name) => {
       const nRow = novaMap.get(name) || {};
-      const dpr = st.party_dpr_table.find((r) => r.Member === name);
       return {
         Member: name,
-        "Nova DPR": Math.max(0, safeFloat(dpr ? dpr.DPR : 10.0, 10.0)),
         Method: normalizeNovaMethod(nRow.Method),
         "Attacks": Math.max(1, safeInt(nRow["Attacks"], 1)),
         "Atk Bonus": safeInt(nRow["Atk Bonus"], 7),
@@ -3209,16 +3243,20 @@
   }
 
   function sanitizeDprRow(row) {
+    // Migrate old saved state: if Damage absent but DPR number present, convert to formula.
+    let dmg = String(row.Damage || "").trim();
+    if (!dmg && typeof row.DPR === "number" && row.DPR > 0) {
+      dmg = damageFormulaForAverage(row.DPR, 6);
+    }
     return {
       Member: String(row.Member || "").trim(),
-      DPR: Math.max(0, safeFloat(row.DPR, 0)),
+      Damage: dmg || "1d6",
     };
   }
 
   function sanitizeNovaRow(row) {
     return {
       Member: String(row.Member || "").trim(),
-      "Nova DPR": Math.max(0, safeFloat(row["Nova DPR"], 0)),
       Method: normalizeNovaMethod(row.Method),
       "Attacks": Math.max(1, safeInt(row["Attacks"], 1)),
       "Atk Bonus": safeInt(row["Atk Bonus"], 7),
