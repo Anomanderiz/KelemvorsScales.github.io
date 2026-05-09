@@ -1041,9 +1041,10 @@
     const p90 = percentile(finite, 90);
     const tpk = metrics.tpkProb;
     const downs = metrics.pcsDownAtVictory;
+    const killRate = (100 * finite.length / Math.max(1, metrics.ttk.length)).toFixed(1);
 
-    els.lblTtkMedian.textContent = `Median TTK: ${med.toFixed(2)} rounds`;
-    els.lblTtkP1090.textContent = `TTK p10-p90: ${p10.toFixed(2)} - ${p90.toFixed(2)} rounds`;
+    els.lblTtkMedian.textContent = `Median TTK: ${med.toFixed(2)} rounds (${killRate}% kill rate)`;
+    els.lblTtkP1090.textContent = `TTK p10-p90: ${p10.toFixed(2)} – ${p90.toFixed(2)} rounds (among kills)`;
     els.lblTpk.textContent = `TPK Probability: ${(100 * tpk).toFixed(1)}%`;
     els.lblDowns.textContent = `PCs down at victory: mean ${meanOf(downs).toFixed(2)}, p90 ${percentile(downs, 90).toFixed(0)}`;
 
@@ -1118,16 +1119,19 @@
     const tpkCap = safeFloat(state.tune_tpk_cap, 0.05);
     const originalHp = safeFloat(state.boss_hp, 150);
     const originalTrials = safeInt(state.enc_trials, 10000);
+    // Proxy for runs where boss never died — must be >> any valid TTK.
+    const maxR = Math.max(1, safeInt(state.enc_max_rounds, 12));
+    const INF_PROXY = (maxR + 1) * 10000;
+
+    const unconditionalMedian = (metrics) => {
+      if (metrics.error) return Number.POSITIVE_INFINITY;
+      const allTtk = metrics.ttk.map(v => (Number.isFinite(v) ? v : INF_PROXY));
+      return percentile(allTtk, 50);
+    };
 
     const simulateWithHp = (hp, trials) => {
       const metrics = runEncounterMc({ boss_hp: Math.max(1, Math.round(hp)), enc_trials: Math.max(1000, Math.round(trials)) });
-      if (metrics.error) {
-        return { med: Number.POSITIVE_INFINITY, tpk: 1.0 };
-      }
-      if (!metrics.finiteTtk.length) {
-        return { med: Number.POSITIVE_INFINITY, tpk: metrics.tpkProb };
-      }
-      return { med: percentile(metrics.finiteTtk, 50), tpk: metrics.tpkProb };
+      return { med: unconditionalMedian(metrics), tpk: metrics.error ? 1.0 : metrics.tpkProb, metrics };
     };
 
     const quickTrials = Math.max(3000, Math.floor(originalTrials * 0.4));
@@ -1208,14 +1212,15 @@
 
     // Single render pass — reuse the metrics it returns to avoid a second simulation
     const finalMetrics = runEncounterAndRender();
-    if (finalMetrics && !finalMetrics.error && finalMetrics.finiteTtk.length) {
-      const finalMed = percentile(finalMetrics.finiteTtk, 50);
+    if (finalMetrics && !finalMetrics.error) {
+      const finalMed = unconditionalMedian(finalMetrics);
+      const finalKillPct = (100 * finalMetrics.finiteTtk.length / Math.max(1, finalMetrics.ttk.length)).toFixed(1);
       const finalTpk = finalMetrics.tpkProb;
 
       if (finalTpk > tpkCap + 1e-9) {
-        alert(`Auto-tuned HP=${tunedHp}, median~${finalMed.toFixed(2)}, but TPK=${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
+        alert(`Auto-tuned HP=${tunedHp}, p50 TTK~${finalMed.toFixed(2)}R (${finalKillPct}% kills), but TPK=${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%. Lower boss DPR or add party sustain.`);
       } else if (capAdjusted) {
-        alert(`Auto-tune applied TPK cap → HP=${tunedHp}. Median ${finalMed.toFixed(2)} rounds, TPK ${(100 * finalTpk).toFixed(1)}%.`);
+        alert(`Auto-tune applied TPK cap → HP=${tunedHp}. p50 TTK ${finalMed.toFixed(2)}R (${finalKillPct}% kills), TPK ${(100 * finalTpk).toFixed(1)}%.`);
       }
 
       setStatus(`Auto-tune complete. Boss HP set to ${tunedHp}.`, 4200);
