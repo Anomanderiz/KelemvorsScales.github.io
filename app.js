@@ -25,10 +25,10 @@
       { Member: "Wizard",  Damage: "4d6" },
     ],
     party_nova_table: [
-      { Member: "Fighter", Method: "attack",    "Attacks": 2, "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
-      { Member: "Rogue",   Method: "attack",    "Attacks": 1, "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
-      { Member: "Cleric",  Method: "attack",    "Attacks": 1, "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.5, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
-      { Member: "Wizard",  Method: "save_half", "Attacks": 1, "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit Ratio": 1.0, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Fighter", Method: "attack",    "Attacks": 2, "Atk Bonus": 8, "Roll Mode": "normal", "Target AC": 16, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.9 },
+      { Member: "Rogue",   Method: "attack",    "Attacks": 1, "Atk Bonus": 7, "Roll Mode": "normal", "Target AC": 16, "Crit": 20, "Save DC": 16, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.85 },
+      { Member: "Cleric",  Method: "attack",    "Attacks": 1, "Atk Bonus": 6, "Roll Mode": "normal", "Target AC": 16, "Crit": 20, "Save DC": 15, "Target Save Bonus": 0, "Save Success Mult": 0.5, Uptime: 0.8 },
+      { Member: "Wizard",  Method: "save_half", "Attacks": 1, "Atk Bonus": 0, "Roll Mode": "normal", "Target AC": 16, "Crit": 20, "Save DC": 16, "Target Save Bonus": 2,  "Save Success Mult": 0.5, Uptime: 0.85 },
     ],
 
     mode_select: "normal",
@@ -131,7 +131,6 @@
     { key: "Attacks", label: "Attacks", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Target AC", label: "Target AC", type: "number", readOnly: true },
     { key: "Crit", label: "Crit ≥", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
-    { key: "Crit Ratio", label: "Crit Ratio", type: "number", step: "0.01", parser: (v) => Math.max(0, safeFloat(v, 1.5)) },
     { key: "Save DC", label: "Save DC", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 16)) },
     { key: "Target Save Bonus", label: "Save Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save Success Mult", label: "Save Success Mult", type: "number", step: "0.01", min: "0", max: "1", parser: (v) => clamp(safeFloat(v, 0.5), 0, 1) },
@@ -158,6 +157,7 @@
     { key: "Name", label: "Name", type: "text", parser: (v) => String(v).trim() },
     { key: "Type", label: "Type", type: "select", options: MECHANIC_TYPES, parser: (v) => normalizeMechanicType(v) },
     { key: "Attack bonus", label: "Atk Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Crit", label: "Crit ≥", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
@@ -369,6 +369,7 @@
         Name: "Raidwide",
         Type: "save",
         "Attack bonus": 0,
+        Crit: 20,
         DC: 15,
         Save: "DEX",
         Damage: "6d6",
@@ -1061,7 +1062,7 @@
       data: {
         labels: metrics.times,
         datasets: [{
-          label: "S(t): Boss alive",
+          label: "S(t): Boss alive (kills only)",
           data: metrics.survivalCurve,
           stepped: "before",
           borderColor: "rgba(191,26,47,1)",
@@ -1073,7 +1074,7 @@
         }],
       },
       options: baseChartOptions({
-        plugins: { title: { display: true, text: "Boss Survival Curve" } },
+        plugins: { title: { display: true, text: "Boss Survival Curve (kills only)" } },
         scales: {
           y: {
             min: 0, max: 1,
@@ -2041,9 +2042,12 @@
 
     const times = [];
     for (let t = 0; t <= maxRounds; t += 1) times.push(t);
-    const survivalCurve = times.map((round) => ttk.filter((v) => v > round).length / trials);
-
     const finiteTtk = ttk.filter((v) => Number.isFinite(v));
+    const nKills = finiteTtk.length;
+    const survivalCurve = times.map((round) =>
+      nKills > 0 ? finiteTtk.filter((v) => v > round).length / nKills : 0
+    );
+
     const downFinite = [];
     for (let i = 0; i < ttk.length; i += 1) {
       if (Number.isFinite(ttk[i])) {
@@ -2809,11 +2813,12 @@
     if (method === "attack") {
       const atkBonus      = safeInt(row["Atk Bonus"], 0);
       const targetAc      = Math.max(1, safeInt(fallbackBossAc, safeInt(row["Target AC"], 16)));
-      const critRatio     = Math.max(0, safeFloat(row["Crit Ratio"], 1.5));
       const critThreshold = Math.max(2, Math.min(20, safeInt(row["Crit"], 20)));
       const [pNon, crit, pAny] = hitProbs(targetAc, atkBonus, mode, critThreshold);
       pMain = pAny;
       pCrit = crit;
+      const dmgExpr = (dprRow && dprRow.Damage) || "1d6";
+      const critRatio = avgDmg > 0 ? averageCrunchyCritDamage(dmgExpr) / avgDmg : 1;
       baseFactor = pNon + critRatio * pCrit;
     } else if (method === "save_half") {
       const saveDc = Math.max(1, safeInt(row["Save DC"], 16));
@@ -2895,11 +2900,7 @@
     const isHit = isCrit || (roll !== 1 && roll + atkBonus >= Math.max(1, safeInt(targetAc, 16)));
     if (!isHit) return 0;
 
-    const dmg = rollDamageOne(expr);
-    if (!isCrit) return dmg;
-
-    const critRatio = Math.max(0, safeFloat(novaRow["Crit Ratio"], 1.5));
-    return dmg * critRatio;
+    return isCrit ? rollDamageCrunchyCritOne(expr) : rollDamageOne(expr);
   }
 
   // Derives the per-PC DPR CV for the manual-DPR fallback model.
@@ -3016,7 +3017,7 @@
     if (kind === "save") {
       return expectedSaveHalfDamage(mech.dc, getSaveBonus(pcRow, mech.save_stat), mech.damage_expr);
     }
-    return expectedAttackDamage(Math.max(1, safeInt(pcRow.AC, 10)), mech.attack_bonus, mech.damage_expr, mode);
+    return expectedAttackDamage(Math.max(1, safeInt(pcRow.AC, 10)), mech.attack_bonus, mech.damage_expr, mode, mech.crit_threshold);
   }
 
   function mechanicsForRound(mechanics, round) {
@@ -3042,7 +3043,7 @@
     let roll = r1;
     if (mode === "adv") roll = Math.max(r1, r2);
     if (mode === "dis") roll = Math.min(r1, r2);
-    const isCrit = roll === 20;
+    const isCrit = roll >= (mech.crit_threshold ?? 20);
     const isHit = isCrit || (roll !== 1 && roll + mech.attack_bonus >= ac);
     if (!isHit) return 0;
     return isCrit ? rollDamageCrunchyCritOne(mech.damage_expr) : rollDamageOne(mech.damage_expr);
@@ -3067,7 +3068,7 @@
     let r = r1;
     if (currentMode[target] === "adv") r = Math.max(r1, r2);
     if (currentMode[target] === "dis") r = Math.min(r1, r2);
-    const isCrit = r === 20;
+    const isCrit = r >= (mech.crit_threshold ?? 20);
     const isHit = isCrit || (r !== 1 && r + mech.attack_bonus >= currentAc[target]);
     if (!isHit) return 0;
     return isCrit ? rollDamageCrunchyCritOne(mech.damage_expr) : rollDamageOne(mech.damage_expr);
@@ -3104,6 +3105,7 @@
         round: Math.max(1, safeInt(row.Round, 1)),
         kind: normalizeMechanicType(row.Type),
         attack_bonus: safeInt(row["Attack bonus"], 0),
+        crit_threshold: Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
         dc: safeInt(row.DC, 0),
         save_stat: saveStat,
         damage_expr: String(row.Damage || "1d6"),
@@ -3731,7 +3733,6 @@
         "Roll Mode": normalizeRollMode(nRow["Roll Mode"]),
         "Target AC": bossAc,
         "Crit": Math.max(2, Math.min(20, safeInt(nRow["Crit"], 20))),
-        "Crit Ratio": Math.max(0, safeFloat(nRow["Crit Ratio"], 1.5)),
         "Save DC": Math.max(1, safeInt(nRow["Save DC"], 16)),
         "Target Save Bonus": safeInt(nRow["Target Save Bonus"], 0),
         "Save Success Mult": clamp(safeFloat(nRow["Save Success Mult"], 0.5), 0, 1),
@@ -3783,7 +3784,6 @@
       "Atk Bonus": safeInt(row["Atk Bonus"], 7),
       "Roll Mode": normalizeRollMode(row["Roll Mode"]),
       "Target AC": Math.max(1, safeInt(row["Target AC"], 16)),
-      "Crit Ratio": Math.max(0, safeFloat(row["Crit Ratio"], 1.5)),
       "Crit": Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
       "Save DC": Math.max(1, safeInt(row["Save DC"], 16)),
       "Target Save Bonus": safeInt(row["Target Save Bonus"], 0),
@@ -3814,6 +3814,7 @@
       Name: String(row.Name || "Mechanic").trim() || "Mechanic",
       Type: normalizeMechanicType(row.Type),
       "Attack bonus": safeInt(row["Attack bonus"], 0),
+      Crit: Math.max(2, Math.min(20, safeInt(row.Crit, 20))),
       DC: safeInt(row.DC, 0),
       Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
       Damage: String(row.Damage || "1d6").trim() || "1d6",
