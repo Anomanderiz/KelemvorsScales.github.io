@@ -4,6 +4,7 @@
   const SAVE_KEYS = ["STR", "DEX", "CON", "INT", "WIS", "CHA"];
   const NOVA_METHODS = ["attack", "save_half", "auto_hit"];
   const STORAGE_KEY = "kelemvor_scales_web_state_v1";
+  const IS_WORKER = typeof document === "undefined" && typeof self !== "undefined";
 
   const DEFAULT_STATE = {
     party_table: [
@@ -160,7 +161,7 @@
     { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
   ];
 
-  let state = normalizeState(loadStateFromStorage() || {});
+  let state = normalizeState(IS_WORKER ? {} : (loadStateFromStorage() || {}));
   let charts = {
     det: null,
     mc: null,
@@ -173,7 +174,9 @@
 
   const els = {};
 
-  document.addEventListener("DOMContentLoaded", init);
+  if (!IS_WORKER) {
+    document.addEventListener("DOMContentLoaded", init);
+  }
 
   function init() {
     cacheElements();
@@ -239,7 +242,7 @@
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
       "reportText",
-      "pacingRounds", "btnApplyPacingHp", "btnApplyPacingDpr", "btnApplyBossKitMult",
+      "pacingRounds",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
       "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish",
@@ -402,20 +405,6 @@
       runButtonAction(els.btnRunMc, runSingleTargetMc, "Single-target Monte Carlo failed.");
     });
 
-
-    els.btnApplyPacingHp.addEventListener("click", () => {
-      applyPacingHp();
-    });
-    if (els.btnApplyPacingDpr) {
-      els.btnApplyPacingDpr.addEventListener("click", () => {
-        applyPacingDpr();
-      });
-    }
-    if (els.btnApplyBossKitMult) {
-      els.btnApplyBossKitMult.addEventListener("click", () => {
-        applyBossKitMultiplier();
-      });
-    }
   }
 
   function bindOptionControls() {
@@ -508,9 +497,9 @@
 
   function runButtonAction(button, action, failureMessage) {
     setBtnLoading(button, true);
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        action();
+        await action();
       } catch (error) {
         reportActionError(error, failureMessage);
       } finally {
@@ -1020,7 +1009,7 @@
     setStatus(`Monte Carlo complete (${state.mc_trials} trials).`, 3200);
   }
 
-  function runEncounterAndRender() {
+  async function runEncounterAndRender() {
     setStatus("Running encounter simulation…", 0);
     const pacing = computePacingResult();
     _lastPacingResult = pacing;
@@ -1031,7 +1020,13 @@
       persistState();
     }
     updatePacingActionButtons(pacing);
-    const metrics = runEncounterMc();
+    const runner = createEncounterWorkerRunner();
+    let metrics;
+    try {
+      metrics = await runner.run({});
+    } finally {
+      runner.close();
+    }
     if (metrics.error) {
       alert(metrics.error);
       setStatus("Encounter simulation failed.", 2600);
@@ -1353,7 +1348,7 @@
     }
   }
 
-  function autoTuneAll() {
+  async function autoTuneAll() {
     setStatus("Auto-tuning encounter... solving HP and TPK together.", 0);
 
     const originalHp = Math.max(1, safeInt(state.boss_hp, 150));
@@ -1366,7 +1361,9 @@
     const wipeTarget = targetRound + 1.5;
     const wipeFloor = targetRound + 0.75;
     const changes = [];
+    const runner = createEncounterWorkerRunner();
 
+    try {
     let pacingResult = computePacingResult();
     const minionCount = Math.max(0, safeInt(state.minion_count, 0));
     if (minionCount > 0 && Boolean(state.minion_replenish)) {
@@ -1385,7 +1382,7 @@
       }
     }
 
-    const summarize = (metrics, hp, mult, tgtRound) => {
+    const summarize = (metrics, hp, mult, tgtRound, wipeByGrace) => {
       if (!metrics || metrics.error) return null;
       const finite = metrics.ttk.filter((v) => Number.isFinite(v));
       const median = percentile(metrics.ttk, 50);
@@ -1394,7 +1391,6 @@
       const band = Number.isFinite(p10) && Number.isFinite(p90) ? p90 - p10 : Infinity;
       const killByTarget = metrics.ttk.filter((v) => Number.isFinite(v) && v <= tgtRound).length / Math.max(1, metrics.ttk.length);
       const projectedWipe = projectedPartyWipeRound(mult, tgtRound);
-      const wipeByGrace = projectedPartyWipeProb(mult, tgtRound + 2, Math.max(800, Math.floor(metrics.ttk.length * 0.35)));
       return {
         hp: Math.max(1, Math.round(hp)),
         mult: clamp(safeFloat(mult, 1), 0, 20),
@@ -1411,12 +1407,24 @@
       };
     };
 
-    const runAt = (hp, mult, trials, tgtRound) => summarize(runEncounterMc({
-      boss_hp: Math.max(1, Math.round(hp)),
-      boss_dpr_mult: clamp(safeFloat(mult, 1), 0, 20),
-      enc_trials: Math.max(1000, Math.round(trials)),
-      enc_max_rounds: Math.max(safeInt(state.enc_max_rounds, 12), tgtRound + 3),
-    }), hp, mult, tgtRound);
+    const runAt = async (hp, mult, trials, tgtRound) => {
+      const trialCount = Math.max(1000, Math.round(trials));
+      const tunedMult = clamp(safeFloat(mult, 1), 0, 20);
+      const metrics = await runner.run({
+        boss_hp: Math.max(1, Math.round(hp)),
+        boss_dpr_mult: tunedMult,
+        enc_trials: trialCount,
+        enc_max_rounds: Math.max(safeInt(state.enc_max_rounds, 12), tgtRound + 3),
+      });
+      const wipeMetrics = await runner.run({
+        boss_hp: 1000000000,
+        boss_dpr_mult: tunedMult,
+        enc_trials: Math.max(500, Math.floor(trialCount * 0.35)),
+        enc_max_rounds: Math.max(1, Math.ceil(tgtRound + 2)),
+      });
+      const wipeByGrace = wipeMetrics && !wipeMetrics.error ? clamp(safeFloat(wipeMetrics.tpkProb, 0), 0, 1) : 0;
+      return summarize(metrics, hp, tunedMult, tgtRound, wipeByGrace);
+    };
 
     const medianDistance = (median, tgtRound) => Number.isFinite(median) ? Math.abs(median - tgtRound) : 999;
     const hpScore = (result, tgtRound) => {
@@ -1426,8 +1434,8 @@
         + Math.max(0, result.tpk - tpkCap) * 100;
     };
 
-    const tuneHpForMult = (mult, tgtRound, trials) => {
-      const low = runAt(1, mult, trials, tgtRound);
+    const tuneHpForMult = async (mult, tgtRound, trials) => {
+      const low = await runAt(1, mult, trials, tgtRound);
       if (!low) return null;
       if (low.median > tgtRound || !Number.isFinite(low.median)) {
         return { ...low, infeasible: "too-lethal-at-1hp" };
@@ -1435,11 +1443,11 @@
 
       const deterministicHp = Math.max(1, safeInt(pacingResult.recommendedBossHp, originalHp));
       let hi = Math.max(10, originalHp, deterministicHp);
-      let high = runAt(hi, mult, trials, tgtRound);
+      let high = await runAt(hi, mult, trials, tgtRound);
       let guard = 0;
       while (high && high.median < tgtRound && guard < 12) {
         hi = Math.ceil(hi * 1.65 + 10);
-        high = runAt(hi, mult, trials, tgtRound);
+        high = await runAt(hi, mult, trials, tgtRound);
         guard += 1;
       }
       if (!high) return null;
@@ -1450,7 +1458,7 @@
 
       for (let i = 0; i < 14 && hiHp - loHp > 1; i += 1) {
         const mid = Math.max(1, Math.floor((loHp + hiHp) / 2));
-        const r = runAt(mid, mult, trials, tgtRound);
+        const r = await runAt(mid, mult, trials, tgtRound);
         if (!r) return null;
         if (hpScore(r, tgtRound) < hpScore(best, tgtRound)) best = r;
         if (r.median < tgtRound) loHp = mid + 1;
@@ -1458,7 +1466,7 @@
       }
 
       for (let hp = Math.max(1, best.hp - 3); hp <= best.hp + 3; hp += 1) {
-        const r = runAt(hp, mult, Math.max(1000, Math.floor(trials * 0.6)), tgtRound);
+        const r = await runAt(hp, mult, Math.max(1000, Math.floor(trials * 0.6)), tgtRound);
         if (r && hpScore(r, tgtRound) < hpScore(best, tgtRound)) best = r;
       }
 
@@ -1494,7 +1502,7 @@
       if (!best || pressureScore(result, targetRound) < pressureScore(best, targetRound)) best = result;
     };
 
-    const zero = tuneAtPressure(0, targetRound, quickTrials);
+    const zero = await tuneAtPressure(0, targetRound, quickTrials);
     remember(zero);
     if (zero && zero.infeasible) {
       alert("Impossible encounter: even at zero boss damage and 1 boss HP, the party cannot reach the target pacing. Check replenishing minions, party DPR, resistance, or max rounds.");
@@ -1502,7 +1510,7 @@
       return;
     }
 
-    const seed = tuneAtPressure(seedMult, targetRound, quickTrials);
+    const seed = await tuneAtPressure(seedMult, targetRound, quickTrials);
     remember(seed);
 
     let loMult = 0;
@@ -1511,7 +1519,7 @@
       loMult = seed.mult;
       hiMult = Math.max(seed.mult * 1.5 + 0.25, 0.5);
       for (let i = 0; i < 8 && hiMult <= 20; i += 1) {
-        const r = tuneAtPressure(hiMult, targetRound, quickTrials);
+        const r = await tuneAtPressure(hiMult, targetRound, quickTrials);
         remember(r);
         if (!r || r.infeasible || r.tpk >= tpkCap || r.wipeByGrace >= 0.45) break;
         loMult = hiMult;
@@ -1522,7 +1530,7 @@
     setStatus("Auto-tuning encounter... binary searching TPK-safe pressure.", 0);
     for (let i = 0; i < 8; i += 1) {
       const mid = (loMult + hiMult) / 2;
-      const r = tuneAtPressure(mid, targetRound, quickTrials);
+      const r = await tuneAtPressure(mid, targetRound, quickTrials);
       remember(r);
       if (!r || r.infeasible || r.tpk > tpkCap || (Number.isFinite(r.projectedWipe) && r.projectedWipe < wipeFloor) || r.wipeByGrace > 0.6) hiMult = mid;
       else loMult = mid;
@@ -1535,10 +1543,10 @@
     }
 
     setStatus("Auto-tuning encounter... final verification.", 0);
-    let final = tuneAtPressure(best.mult, targetRound, Math.max(3000, Math.floor(originalTrials * 0.6))) || best;
+    let final = await tuneAtPressure(best.mult, targetRound, Math.max(3000, Math.floor(originalTrials * 0.6))) || best;
     let safetyPasses = 0;
     while (final && final.tpk > tpkCap && final.mult > 0.01 && safetyPasses < 4) {
-      final = tuneAtPressure(final.mult * 0.85, targetRound, Math.max(3000, Math.floor(originalTrials * 0.5))) || final;
+      final = await tuneAtPressure(final.mult * 0.85, targetRound, Math.max(3000, Math.floor(originalTrials * 0.5))) || final;
       safetyPasses += 1;
     }
 
@@ -1550,12 +1558,13 @@
     state.pacing_rounds = targetRound;
     state.boss_hp = tunedHp;
     state.boss_dpr_mult = tunedMult;
+    state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), targetRound + 3);
     state.enc_trials = originalTrials;
     syncControlsFromState();
     persistState();
     refreshReport();
 
-    const finalMetrics = runEncounterAndRender();
+    const finalMetrics = await runEncounterAndRender();
     if (!finalMetrics || finalMetrics.error) {
       setStatus("Auto-tune applied values, but final simulation failed.", 4200);
       return;
@@ -1569,7 +1578,13 @@
     const finalTpk = finalMetrics.tpkProb;
     const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
     const finalProjectedWipe = projectedPartyWipeRound(state.boss_dpr_mult, targetRound);
-    const finalWipeByGrace = projectedPartyWipeProb(state.boss_dpr_mult, targetRound + 2, Math.max(1000, Math.floor(originalTrials * 0.25)));
+    const finalWipeMetrics = await runner.run({
+      boss_hp: 1000000000,
+      boss_dpr_mult: state.boss_dpr_mult,
+      enc_trials: Math.max(1000, Math.floor(originalTrials * 0.25)),
+      enc_max_rounds: targetRound + 2,
+    });
+    const finalWipeByGrace = finalWipeMetrics && !finalWipeMetrics.error ? clamp(safeFloat(finalWipeMetrics.tpkProb, 0), 0, 1) : 0;
     const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at tuned values";
     const tpkLine = finalTpk <= tpkCap
       ? `TPK ${(100 * finalTpk).toFixed(1)}% <= cap ${(100 * tpkCap).toFixed(1)}%`
@@ -1586,6 +1601,9 @@
       bandLine
     );
     setStatus(`Auto-tune complete. HP=${state.boss_hp}, DPR=${state.boss_dpr_mult.toFixed(2)}x.`, 5000);
+    } finally {
+      runner.close();
+    }
   }
 
   function runMcSim(pcRow, attacks, opts) {
@@ -2201,6 +2219,79 @@
     return clamp(safeFloat(m.tpkProb, 0), 0, 1);
   }
 
+  function createEncounterWorkerRunner() {
+    if (IS_WORKER || typeof Worker === "undefined" || typeof window === "undefined") {
+      return {
+        run: async (overrides = {}) => {
+          await yieldToBrowser();
+          const result = runEncounterMc(overrides);
+          await yieldToBrowser();
+          return result;
+        },
+        close: () => {},
+      };
+    }
+
+    let worker;
+    try {
+      worker = new Worker(new URL("app.js", window.location.href).toString());
+    } catch (_) {
+      return {
+        run: async (overrides = {}) => {
+          await yieldToBrowser();
+          const result = runEncounterMc(overrides);
+          await yieldToBrowser();
+          return result;
+        },
+        close: () => {},
+      };
+    }
+
+    let seq = 0;
+    const pending = new Map();
+
+    worker.onmessage = (event) => {
+      const data = event.data || {};
+      const entry = pending.get(data.id);
+      if (!entry) return;
+      pending.delete(data.id);
+      if (data.error) entry.reject(new Error(data.error));
+      else entry.resolve(data.result);
+    };
+
+    worker.onerror = (event) => {
+      const err = new Error(event.message || "Encounter worker failed.");
+      for (const entry of pending.values()) {
+        entry.reject(err);
+      }
+      pending.clear();
+    };
+
+    return {
+      run: (overrides = {}) => new Promise((resolve, reject) => {
+        const id = ++seq;
+        pending.set(id, { resolve, reject });
+        worker.postMessage({
+          id,
+          type: "runEncounterMc",
+          state: deepClone(state),
+          overrides,
+        });
+      }),
+      close: () => {
+        for (const entry of pending.values()) {
+          entry.reject(new Error("Encounter worker closed."));
+        }
+        pending.clear();
+        worker.terminate();
+      },
+    };
+  }
+
+  function yieldToBrowser() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   function renderPhaseSection() {
     renderEditableTable({
       mount: els.phaseTable,
@@ -2225,16 +2316,7 @@
   }
 
   function updatePacingActionButtons(result) {
-    if (els.btnApplyPacingHp) {
-      els.btnApplyPacingHp.disabled = result.recommendedBossHp <= 0;
-    }
-    if (els.btnApplyPacingDpr) {
-      els.btnApplyPacingDpr.disabled = !(Number.isFinite(result.targetBossDprMult) && result.targetBossDprMult >= 0);
-    }
-    if (els.btnApplyBossKitMult) {
-      const mult = bossDprMultiplier(state);
-      els.btnApplyBossKitMult.disabled = !(Number.isFinite(mult) && mult > 0 && Math.abs(mult - 1) >= 0.005);
-    }
+    void result;
   }
 
   function applyPacingHp() {
@@ -3450,6 +3532,7 @@
 
   function loadStateFromStorage() {
     try {
+      if (typeof localStorage === "undefined") return null;
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       return JSON.parse(raw);
@@ -3460,6 +3543,7 @@
 
   function persistState() {
     try {
+      if (typeof localStorage === "undefined") return;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (_) {
       // Ignore quota/storage errors silently.
@@ -3803,5 +3887,19 @@
       }
     }
     return out;
+  }
+
+  if (IS_WORKER) {
+    self.onmessage = (event) => {
+      const data = event.data || {};
+      if (data.type !== "runEncounterMc") return;
+      try {
+        state = normalizeState(data.state || {});
+        const result = runEncounterMc(data.overrides || {});
+        self.postMessage({ id: data.id, result });
+      } catch (error) {
+        self.postMessage({ id: data.id, error: error && error.message ? error.message : String(error) });
+      }
+    };
   }
 })();
