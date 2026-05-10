@@ -74,6 +74,10 @@
     tune_band_max: 3.0,
 
     pacing_rounds: 5,
+    tight_pacing_enabled: true,
+    tight_cap_pct: 0.24,
+    tight_cap_resources: 3,
+    tight_anti_slog_mult: 1.35,
 
     minion_count: 0,
     minion_ac: 14,
@@ -1421,6 +1425,7 @@
         boss_dpr_mult: tunedMult,
         enc_trials: Math.max(500, Math.floor(trialCount * 0.35)),
         enc_max_rounds: Math.max(1, Math.ceil(tgtRound + 2)),
+        tight_pacing_enabled: false,
       });
       const wipeByGrace = wipeMetrics && !wipeMetrics.error ? clamp(safeFloat(wipeMetrics.tpkProb, 0), 0, 1) : 0;
       return summarize(metrics, hp, tunedMult, tgtRound, wipeByGrace);
@@ -1583,6 +1588,7 @@
       boss_dpr_mult: state.boss_dpr_mult,
       enc_trials: Math.max(1000, Math.floor(originalTrials * 0.25)),
       enc_max_rounds: targetRound + 2,
+      tight_pacing_enabled: false,
     });
     const finalWipeByGrace = finalWipeMetrics && !finalWipeMetrics.error ? clamp(safeFloat(finalWipeMetrics.tpkProb, 0), 0, 1) : 0;
     const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at tuned values";
@@ -1598,7 +1604,8 @@
       `Target: ${targetRound}R | Median: ${Number.isFinite(finalMed) ? finalMed.toFixed(1) : "inf"}R | ` +
       `p10-p90: ${Number.isFinite(finalP10) ? finalP10.toFixed(1) : "inf"}-${Number.isFinite(finalP90) ? finalP90.toFixed(1) : "inf"}R\n` +
       `${tpkLine} | Projected party wipe: ${Number.isFinite(finalProjectedWipe) ? finalProjectedWipe.toFixed(1) : "inf"}R | Wipe by R${targetRound + 2}: ${(100 * finalWipeByGrace).toFixed(1)}% | Kill by target: ${(100 * finalKillByTarget).toFixed(1)}%` +
-      bandLine
+      bandLine +
+      tightPacingAdviceText()
     );
     setStatus(`Auto-tune complete. HP=${state.boss_hp}, DPR=${state.boss_dpr_mult.toFixed(2)}x.`, 5000);
     } finally {
@@ -1734,6 +1741,12 @@
     const useNova = Boolean(opts.enc_use_nova);
     const dprCv = clamp(safeFloat(opts.dpr_cv, 0.6), 0.05, 2.0);
     const dprMult = bossDprMultiplier(opts);
+    const bossMaxHp = Math.max(1, safeFloat(opts.boss_hp, 150));
+    const tightPacing = Boolean(opts.tight_pacing_enabled);
+    const tightTargetRound = clamp(safeInt(opts.pacing_rounds, 5), 5, 10);
+    const tightCapPct = clamp(safeFloat(opts.tight_cap_pct, 0.24), 0.10, 0.40);
+    const tightCapResources = Math.max(0, safeInt(opts.tight_cap_resources, 3));
+    const tightAntiSlogMult = clamp(safeFloat(opts.tight_anti_slog_mult, 1.35), 1.0, 2.5);
 
     const effList = effPartyDprs(useNova);
     if (!effList.length) {
@@ -1745,7 +1758,9 @@
     const effByName = new Map(effList.map((r) => [String(r[0]), safeFloat(r[1], 0)]));
     const effMeans = partyNames.map((name) => effByName.get(name) || 0);
 
-    const bossHp = new Array(trials).fill(Math.max(1, safeFloat(opts.boss_hp, 150)));
+    const bossHp = new Array(trials).fill(bossMaxHp);
+    const bossDamageThisRound = new Array(trials).fill(0);
+    const tightResourcesLeft = new Array(trials).fill(tightCapResources);
     const pcsHp = Array.from({ length: trials }, () => party.map((pc) => Math.max(1, safeFloat(pc.HP, 1))));
     const pcsAlive = Array.from({ length: trials }, () => party.map(() => true));
 
@@ -1812,7 +1827,20 @@
       }
 
       if (bossRawDamage > 0) {
-        bossHp[t] -= Math.max(0, bossRawDamage / resist - regen);
+        let bossDamage = Math.max(0, bossRawDamage / resist - regen);
+        if (tightPacing && roundNumber > tightTargetRound && tightAntiSlogMult > 1) {
+          bossDamage *= Math.pow(tightAntiSlogMult, roundNumber - tightTargetRound);
+        }
+        if (tightPacing && roundNumber <= tightTargetRound && tightResourcesLeft[t] > 0) {
+          const roundCap = bossMaxHp * tightCapPct;
+          const remainingCap = Math.max(0, roundCap - bossDamageThisRound[t]);
+          if (bossDamage > remainingCap) {
+            bossDamage = remainingCap;
+            tightResourcesLeft[t] -= 1;
+          }
+        }
+        bossDamageThisRound[t] += bossDamage;
+        bossHp[t] -= bossDamage;
       }
 
       if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
@@ -1822,6 +1850,7 @@
     };
 
     for (let rnd = 1; rnd <= maxRounds; rnd += 1) {
+      bossDamageThisRound.fill(0);
       // Replenishing minions: reset each trial's pool at the top of every round.
       if (mcMinionReplenish) {
         for (let t = 0; t < trials; t += 1) {
@@ -2214,6 +2243,7 @@
       boss_dpr_mult: clamp(safeFloat(mult, 1), 0, 20),
       enc_trials: Math.max(500, Math.round(trials)),
       enc_max_rounds: Math.max(1, Math.ceil(safeFloat(horizonRounds, 7))),
+      tight_pacing_enabled: false,
     });
     if (!m || m.error) return 0;
     return clamp(safeFloat(m.tpkProb, 0), 0, 1);
@@ -2472,8 +2502,27 @@
         `Target boss DPR multiplier: ${fmtMult(r.targetBossDprMult)}.`;
     }
 
+    const advice = tightPacingAdviceHtml();
     el.className = `pacing-balance ${cls}`;
-    el.innerHTML = `${badge} ${analysis}`;
+    el.innerHTML = `${badge} ${analysis}${advice}`;
+  }
+
+  function tightPacingAdviceHtml() {
+    if (!state.tight_pacing_enabled) return "";
+    const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
+    const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
+    const target = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
+    return `<div class="pacing-advice"><strong>Tight pacing table rule:</strong> Until round ${target}, the boss can burn ${resources} Legendary Resistance/Action pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. After round ${target}, remove that protection and make the boss collapse: damage that reaches boss HP is modeled at ${antiSlog.toFixed(2)}x per late round.</div>`;
+  }
+
+  function tightPacingAdviceText() {
+    if (!state.tight_pacing_enabled) return "";
+    const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
+    const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
+    const target = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
+    return `\n\nTable rule required for these numbers:\n- Until round ${target}, the boss may burn ${resources} Legendary Resistance/Action pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- After round ${target}, remove that protection and make the boss collapse: damage that reaches boss HP is modeled at ${antiSlog.toFixed(2)}x per late round.\n- If you do not run those mechanics, expect a wider p10-p90 spread than the tool reports.`;
   }
 
   function fmt1(n) {
@@ -3512,7 +3561,11 @@
 
   function refreshReport() {
     if (!els.reportText) return;
-    els.reportText.value = JSON.stringify(state, null, 2);
+    const payload = {
+      ...state,
+      _tight_pacing_advice: tightPacingAdviceText().trim(),
+    };
+    els.reportText.value = JSON.stringify(payload, null, 2);
   }
 
   function setStatus(message, durationMs = 2500) {
@@ -3614,6 +3667,12 @@
     base.tune_band_max  = Math.max(0.5, safeFloat(base.tune_band_max, 3.0));
 
     base.pacing_rounds = clamp(safeInt(base.pacing_rounds, 5), 5, 10);
+    base.tight_pacing_enabled = Object.prototype.hasOwnProperty.call(src, "tight_pacing_enabled")
+      ? Boolean(base.tight_pacing_enabled)
+      : true;
+    base.tight_cap_pct = clamp(safeFloat(base.tight_cap_pct, 0.24), 0.10, 0.40);
+    base.tight_cap_resources = clamp(safeInt(base.tight_cap_resources, 3), 0, 6);
+    base.tight_anti_slog_mult = clamp(safeFloat(base.tight_anti_slog_mult, 1.35), 1.0, 2.5);
 
     base.minion_count     = Math.max(0, safeInt(base.minion_count, 0));
     base.minion_ac        = Math.max(1, safeInt(base.minion_ac, 14));

@@ -808,6 +808,13 @@ td select {
 .pacing-balance.bal-hard { border-left-color: var(--danger); }
 .pacing-balance.bal-easy { border-left-color: var(--parchment); }
 
+.pacing-advice {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+}
+
 .pacing-badge {
   display: inline-block;
   padding: 2px 9px;
