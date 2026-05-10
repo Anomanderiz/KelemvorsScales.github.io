@@ -1362,8 +1362,9 @@
     const quickTrials = Math.max(2500, Math.min(12000, Math.floor(originalTrials * 0.35)));
     const targetRound = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
     const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
-    const tpkGoal = tpkCap <= 0 ? 0 : Math.max(0.0025, tpkCap * 0.6);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
+    const wipeTarget = targetRound + 1.5;
+    const wipeFloor = targetRound + 0.75;
     const changes = [];
 
     let pacingResult = computePacingResult();
@@ -1392,6 +1393,8 @@
       const p90 = finite.length ? percentile(finite, 90) : Infinity;
       const band = Number.isFinite(p10) && Number.isFinite(p90) ? p90 - p10 : Infinity;
       const killByTarget = metrics.ttk.filter((v) => Number.isFinite(v) && v <= tgtRound).length / Math.max(1, metrics.ttk.length);
+      const projectedWipe = projectedPartyWipeRound(mult, tgtRound);
+      const wipeByGrace = projectedPartyWipeProb(mult, tgtRound + 2, Math.max(800, Math.floor(metrics.ttk.length * 0.35)));
       return {
         hp: Math.max(1, Math.round(hp)),
         mult: clamp(safeFloat(mult, 1), 0, 20),
@@ -1403,6 +1406,8 @@
         band,
         tpk: metrics.tpkProb,
         killByTarget,
+        projectedWipe,
+        wipeByGrace,
       };
     };
 
@@ -1463,10 +1468,15 @@
     const tuneAtPressure = (mult, tgtRound, trials) => tuneHpForMult(mult, tgtRound, trials);
     const pressureScore = (result, tgtRound) => {
       if (!result || result.infeasible) return Infinity;
-      const tpkPenalty = result.tpk > tpkCap ? (result.tpk - tpkCap) * 1000 : Math.abs(result.tpk - tpkGoal) * 8;
+      const projectedWipe = result.projectedWipe;
+      const wipePenalty = Number.isFinite(projectedWipe)
+        ? Math.abs(projectedWipe - wipeTarget) * 8 + Math.max(0, wipeFloor - projectedWipe) * 120
+        : 80;
+      const graceWipePenalty = Math.abs(result.wipeByGrace - 0.5) * 45 + Math.max(0, 0.35 - result.wipeByGrace) * 90;
+      const tpkPenalty = result.tpk > tpkCap ? (result.tpk - tpkCap) * 1200 : 0;
       const medianPenalty = medianDistance(result.median, tgtRound) * 25;
       const bandPenalty = Number.isFinite(result.band) ? Math.max(0, result.band - bandTarget) * 0.4 : 10;
-      return medianPenalty + tpkPenalty + bandPenalty;
+      return medianPenalty + wipePenalty + graceWipePenalty + tpkPenalty + bandPenalty;
     };
 
     const seedMult = clamp(
@@ -1497,13 +1507,13 @@
 
     let loMult = 0;
     let hiMult = Math.max(0.25, seedMult);
-    if (seed && !seed.infeasible && seed.tpk <= tpkGoal) {
+    if (seed && !seed.infeasible && seed.tpk <= tpkCap && seed.wipeByGrace < 0.45) {
       loMult = seed.mult;
       hiMult = Math.max(seed.mult * 1.5 + 0.25, 0.5);
       for (let i = 0; i < 8 && hiMult <= 20; i += 1) {
         const r = tuneAtPressure(hiMult, targetRound, quickTrials);
         remember(r);
-        if (!r || r.infeasible || r.tpk >= tpkGoal) break;
+        if (!r || r.infeasible || r.tpk >= tpkCap || r.wipeByGrace >= 0.45) break;
         loMult = hiMult;
         hiMult = hiMult * 1.5 + 0.25;
       }
@@ -1514,7 +1524,7 @@
       const mid = (loMult + hiMult) / 2;
       const r = tuneAtPressure(mid, targetRound, quickTrials);
       remember(r);
-      if (!r || r.infeasible || r.tpk > tpkGoal) hiMult = mid;
+      if (!r || r.infeasible || r.tpk > tpkCap || (Number.isFinite(r.projectedWipe) && r.projectedWipe < wipeFloor) || r.wipeByGrace > 0.6) hiMult = mid;
       else loMult = mid;
     }
 
@@ -1558,6 +1568,8 @@
     const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
     const finalTpk = finalMetrics.tpkProb;
     const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
+    const finalProjectedWipe = projectedPartyWipeRound(state.boss_dpr_mult, targetRound);
+    const finalWipeByGrace = projectedPartyWipeProb(state.boss_dpr_mult, targetRound + 2, Math.max(1000, Math.floor(originalTrials * 0.25)));
     const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at tuned values";
     const tpkLine = finalTpk <= tpkCap
       ? `TPK ${(100 * finalTpk).toFixed(1)}% <= cap ${(100 * tpkCap).toFixed(1)}%`
@@ -1570,7 +1582,7 @@
       `Auto-tune complete:\n${lines}\n\n` +
       `Target: ${targetRound}R | Median: ${Number.isFinite(finalMed) ? finalMed.toFixed(1) : "inf"}R | ` +
       `p10-p90: ${Number.isFinite(finalP10) ? finalP10.toFixed(1) : "inf"}-${Number.isFinite(finalP90) ? finalP90.toFixed(1) : "inf"}R\n` +
-      `${tpkLine} | Kill by target: ${(100 * finalKillByTarget).toFixed(1)}%` +
+      `${tpkLine} | Projected party wipe: ${Number.isFinite(finalProjectedWipe) ? finalProjectedWipe.toFixed(1) : "inf"}R | Wipe by R${targetRound + 2}: ${(100 * finalWipeByGrace).toFixed(1)}% | Kill by target: ${(100 * finalKillByTarget).toFixed(1)}%` +
       bandLine
     );
     setStatus(`Auto-tune complete. HP=${state.boss_hp}, DPR=${state.boss_dpr_mult.toFixed(2)}x.`, 5000);
@@ -2099,7 +2111,7 @@
         ? Math.max(0, (neededNetDpr + thpAvg) / rawIncomingPerPc)
         : Infinity;
       const neededAttackDpr = Number.isFinite(targetMultForPc) ? rawIncomingPerPc * targetMultForPc : 0;
-      if (Number.isFinite(targetMultForPc) && (targetBossDprMult == null || targetMultForPc < targetBossDprMult)) {
+      if (Number.isFinite(targetMultForPc) && (targetBossDprMult == null || targetMultForPc > targetBossDprMult)) {
         targetBossDprMult = targetMultForPc;
         targetAttackDpr = neededAttackDpr;
         toughestPcName = pc.Name || "?";
@@ -2144,6 +2156,49 @@
     renderPacingResult(result);
     updatePacingActionButtons(result);
     setStatus("Pacing computed.", 2000);
+  }
+
+  function projectedPartyWipeRound(mult, horizonRounds = 5) {
+    const attacks = attacksEnabledFromTable(state.attacks_table);
+    const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
+    const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
+    if (!party.length) return Infinity;
+
+    const dprMult = clamp(safeFloat(mult, 1), 0, 20);
+    const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
+    const spread = Math.max(1, safeInt(state.spread_targets, 1));
+    const rounds = Math.max(1, safeFloat(horizonRounds, 5));
+    const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
+
+    let lastDown = 0;
+    let anyFinite = false;
+    for (const pc of party) {
+      const pcHp = Math.max(1, safeInt(pc.HP, 1));
+      const attackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, rounds);
+      const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, rounds);
+      const minionDpr = minionDprVsPc(pc);
+      const rawIncoming = attackDpr / spread + phaseDpr + minionDpr + lairRechDpr;
+      const net = Math.max(0, rawIncoming * dprMult - thpAvg);
+      if (net <= 0) return Infinity;
+      const ttd = pcHp / net;
+      if (Number.isFinite(ttd)) {
+        lastDown = Math.max(lastDown, ttd);
+        anyFinite = true;
+      }
+    }
+
+    return anyFinite ? lastDown : Infinity;
+  }
+
+  function projectedPartyWipeProb(mult, horizonRounds, trials) {
+    const m = runEncounterMc({
+      boss_hp: 1000000000,
+      boss_dpr_mult: clamp(safeFloat(mult, 1), 0, 20),
+      enc_trials: Math.max(500, Math.round(trials)),
+      enc_max_rounds: Math.max(1, Math.ceil(safeFloat(horizonRounds, 7))),
+    });
+    if (!m || m.error) return 0;
+    return clamp(safeFloat(m.tpkProb, 0), 0, 1);
   }
 
   function renderPhaseSection() {
