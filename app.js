@@ -1117,7 +1117,7 @@
     return metrics;
   }
 
-  function autoTuneAll() {
+  function autoTuneAllLegacy() {
     setStatus("Auto-tuning encounter… Stage 1: boss DPR.", 0);
 
     // targetRound is mutable — the tuner may adjust it within [5, 10] for band compliance.
@@ -1351,6 +1351,229 @@
     } else {
       setStatus("Auto-tune completed with partial results.", 4200);
     }
+  }
+
+  function autoTuneAll() {
+    setStatus("Auto-tuning encounter... solving HP and TPK together.", 0);
+
+    const originalHp = Math.max(1, safeInt(state.boss_hp, 150));
+    const originalMult = bossDprMultiplier(state);
+    const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
+    const quickTrials = Math.max(2500, Math.min(12000, Math.floor(originalTrials * 0.35)));
+    const targetRound = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
+    const tpkGoal = tpkCap <= 0 ? 0 : Math.max(0.0025, tpkCap * 0.6);
+    const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
+    const changes = [];
+
+    let pacingResult = computePacingResult();
+    const minionCount = Math.max(0, safeInt(state.minion_count, 0));
+    if (minionCount > 0 && Boolean(state.minion_replenish)) {
+      const mph = pacingResult.minionPhaseInfo;
+      if (!mph || mph.partyDprVsMinions <= 0) {
+        alert(`Impossible encounter: party expected DPR against minion AC ${state.minion_ac} is 0.\nReduce minion AC, remove replenish, or add party accuracy/damage.`);
+        setStatus("Auto-tune aborted: minions are unkillable.", 4000);
+        return;
+      }
+
+      const newHp = Math.max(1, Math.floor((mph.partyDprVsMinions * 0.8) / minionCount));
+      if (newHp < Math.round(state.minion_hp)) {
+        changes.push(`Minion HP: ${Math.round(state.minion_hp)} -> ${newHp}`);
+        state.minion_hp = newHp;
+        pacingResult = computePacingResult();
+      }
+    }
+
+    const summarize = (metrics, hp, mult, tgtRound) => {
+      if (!metrics || metrics.error) return null;
+      const finite = metrics.ttk.filter((v) => Number.isFinite(v));
+      const median = percentile(metrics.ttk, 50);
+      const p10 = finite.length ? percentile(finite, 10) : Infinity;
+      const p90 = finite.length ? percentile(finite, 90) : Infinity;
+      const band = Number.isFinite(p10) && Number.isFinite(p90) ? p90 - p10 : Infinity;
+      const killByTarget = metrics.ttk.filter((v) => Number.isFinite(v) && v <= tgtRound).length / Math.max(1, metrics.ttk.length);
+      return {
+        hp: Math.max(1, Math.round(hp)),
+        mult: clamp(safeFloat(mult, 1), 0, 20),
+        metrics,
+        median,
+        finite,
+        p10,
+        p90,
+        band,
+        tpk: metrics.tpkProb,
+        killByTarget,
+      };
+    };
+
+    const runAt = (hp, mult, trials, tgtRound) => summarize(runEncounterMc({
+      boss_hp: Math.max(1, Math.round(hp)),
+      boss_dpr_mult: clamp(safeFloat(mult, 1), 0, 20),
+      enc_trials: Math.max(1000, Math.round(trials)),
+      enc_max_rounds: Math.max(safeInt(state.enc_max_rounds, 12), tgtRound + 3),
+    }), hp, mult, tgtRound);
+
+    const medianDistance = (median, tgtRound) => Number.isFinite(median) ? Math.abs(median - tgtRound) : 999;
+    const hpScore = (result, tgtRound) => {
+      if (!result) return Infinity;
+      return medianDistance(result.median, tgtRound)
+        + Math.abs(result.killByTarget - 0.5) * 0.35
+        + Math.max(0, result.tpk - tpkCap) * 100;
+    };
+
+    const tuneHpForMult = (mult, tgtRound, trials) => {
+      const low = runAt(1, mult, trials, tgtRound);
+      if (!low) return null;
+      if (low.median > tgtRound || !Number.isFinite(low.median)) {
+        return { ...low, infeasible: "too-lethal-at-1hp" };
+      }
+
+      const deterministicHp = Math.max(1, safeInt(pacingResult.recommendedBossHp, originalHp));
+      let hi = Math.max(10, originalHp, deterministicHp);
+      let high = runAt(hi, mult, trials, tgtRound);
+      let guard = 0;
+      while (high && high.median < tgtRound && guard < 12) {
+        hi = Math.ceil(hi * 1.65 + 10);
+        high = runAt(hi, mult, trials, tgtRound);
+        guard += 1;
+      }
+      if (!high) return null;
+
+      let best = hpScore(low, tgtRound) <= hpScore(high, tgtRound) ? low : high;
+      let loHp = 1;
+      let hiHp = hi;
+
+      for (let i = 0; i < 14 && hiHp - loHp > 1; i += 1) {
+        const mid = Math.max(1, Math.floor((loHp + hiHp) / 2));
+        const r = runAt(mid, mult, trials, tgtRound);
+        if (!r) return null;
+        if (hpScore(r, tgtRound) < hpScore(best, tgtRound)) best = r;
+        if (r.median < tgtRound) loHp = mid + 1;
+        else hiHp = mid;
+      }
+
+      for (let hp = Math.max(1, best.hp - 3); hp <= best.hp + 3; hp += 1) {
+        const r = runAt(hp, mult, Math.max(1000, Math.floor(trials * 0.6)), tgtRound);
+        if (r && hpScore(r, tgtRound) < hpScore(best, tgtRound)) best = r;
+      }
+
+      return best;
+    };
+
+    const tuneAtPressure = (mult, tgtRound, trials) => tuneHpForMult(mult, tgtRound, trials);
+    const pressureScore = (result, tgtRound) => {
+      if (!result || result.infeasible) return Infinity;
+      const tpkPenalty = result.tpk > tpkCap ? (result.tpk - tpkCap) * 1000 : Math.abs(result.tpk - tpkGoal) * 8;
+      const medianPenalty = medianDistance(result.median, tgtRound) * 25;
+      const bandPenalty = Number.isFinite(result.band) ? Math.max(0, result.band - bandTarget) * 0.4 : 10;
+      return medianPenalty + tpkPenalty + bandPenalty;
+    };
+
+    const seedMult = clamp(
+      Number.isFinite(pacingResult.targetBossDprMult) && pacingResult.targetBossDprMult > 0
+        ? pacingResult.targetBossDprMult
+        : originalMult,
+      0,
+      20
+    );
+
+    setStatus("Auto-tuning encounter... bracketing boss pressure.", 0);
+    let best = null;
+    const remember = (result) => {
+      if (!result || result.infeasible) return;
+      if (!best || pressureScore(result, targetRound) < pressureScore(best, targetRound)) best = result;
+    };
+
+    const zero = tuneAtPressure(0, targetRound, quickTrials);
+    remember(zero);
+    if (zero && zero.infeasible) {
+      alert("Impossible encounter: even at zero boss damage and 1 boss HP, the party cannot reach the target pacing. Check replenishing minions, party DPR, resistance, or max rounds.");
+      setStatus("Auto-tune aborted: target pacing is structurally impossible.", 5000);
+      return;
+    }
+
+    const seed = tuneAtPressure(seedMult, targetRound, quickTrials);
+    remember(seed);
+
+    let loMult = 0;
+    let hiMult = Math.max(0.25, seedMult);
+    if (seed && !seed.infeasible && seed.tpk <= tpkGoal) {
+      loMult = seed.mult;
+      hiMult = Math.max(seed.mult * 1.5 + 0.25, 0.5);
+      for (let i = 0; i < 8 && hiMult <= 20; i += 1) {
+        const r = tuneAtPressure(hiMult, targetRound, quickTrials);
+        remember(r);
+        if (!r || r.infeasible || r.tpk >= tpkGoal) break;
+        loMult = hiMult;
+        hiMult = hiMult * 1.5 + 0.25;
+      }
+    }
+
+    setStatus("Auto-tuning encounter... binary searching TPK-safe pressure.", 0);
+    for (let i = 0; i < 8; i += 1) {
+      const mid = (loMult + hiMult) / 2;
+      const r = tuneAtPressure(mid, targetRound, quickTrials);
+      remember(r);
+      if (!r || r.infeasible || r.tpk > tpkGoal) hiMult = mid;
+      else loMult = mid;
+    }
+
+    if (!best) {
+      alert("Auto-tune could not find a valid HP/DPR solution. Check that the party can damage the boss and that max rounds is at least target + 3.");
+      setStatus("Auto-tune failed.", 4200);
+      return;
+    }
+
+    setStatus("Auto-tuning encounter... final verification.", 0);
+    let final = tuneAtPressure(best.mult, targetRound, Math.max(3000, Math.floor(originalTrials * 0.6))) || best;
+    let safetyPasses = 0;
+    while (final && final.tpk > tpkCap && final.mult > 0.01 && safetyPasses < 4) {
+      final = tuneAtPressure(final.mult * 0.85, targetRound, Math.max(3000, Math.floor(originalTrials * 0.5))) || final;
+      safetyPasses += 1;
+    }
+
+    const tunedHp = Math.max(1, Math.round(final.hp));
+    const tunedMult = round2(clamp(final.mult, 0, 20));
+    if (tunedHp !== originalHp) changes.push(`Boss HP: ${originalHp} -> ${tunedHp}`);
+    if (Math.abs(tunedMult - originalMult) > 0.01) changes.push(`Boss DPR mult: ${originalMult.toFixed(2)}x -> ${tunedMult.toFixed(2)}x`);
+
+    state.pacing_rounds = targetRound;
+    state.boss_hp = tunedHp;
+    state.boss_dpr_mult = tunedMult;
+    state.enc_trials = originalTrials;
+    syncControlsFromState();
+    persistState();
+    refreshReport();
+
+    const finalMetrics = runEncounterAndRender();
+    if (!finalMetrics || finalMetrics.error) {
+      setStatus("Auto-tune applied values, but final simulation failed.", 4200);
+      return;
+    }
+
+    const finiteTtk = finalMetrics.ttk.filter((v) => Number.isFinite(v));
+    const finalMed = percentile(finalMetrics.ttk, 50);
+    const finalP10 = finiteTtk.length ? percentile(finiteTtk, 10) : Infinity;
+    const finalP90 = finiteTtk.length ? percentile(finiteTtk, 90) : Infinity;
+    const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
+    const finalTpk = finalMetrics.tpkProb;
+    const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
+    const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at tuned values";
+    const tpkLine = finalTpk <= tpkCap
+      ? `TPK ${(100 * finalTpk).toFixed(1)}% <= cap ${(100 * tpkCap).toFixed(1)}%`
+      : `TPK ${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%; reduce boss/minion damage or target a shorter fight`;
+    const bandLine = finalBand > bandTarget + 0.5
+      ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; damage variance is too high for tighter pacing without changing mechanics.`
+      : "";
+
+    alert(
+      `Auto-tune complete:\n${lines}\n\n` +
+      `Target: ${targetRound}R | Median: ${Number.isFinite(finalMed) ? finalMed.toFixed(1) : "inf"}R | ` +
+      `p10-p90: ${Number.isFinite(finalP10) ? finalP10.toFixed(1) : "inf"}-${Number.isFinite(finalP90) ? finalP90.toFixed(1) : "inf"}R\n` +
+      `${tpkLine} | Kill by target: ${(100 * finalKillByTarget).toFixed(1)}%` +
+      bandLine
+    );
+    setStatus(`Auto-tune complete. HP=${state.boss_hp}, DPR=${state.boss_dpr_mult.toFixed(2)}x.`, 5000);
   }
 
   function runMcSim(pcRow, attacks, opts) {
@@ -1876,7 +2099,7 @@
         ? Math.max(0, (neededNetDpr + thpAvg) / rawIncomingPerPc)
         : Infinity;
       const neededAttackDpr = Number.isFinite(targetMultForPc) ? rawIncomingPerPc * targetMultForPc : 0;
-      if (Number.isFinite(targetMultForPc) && (targetBossDprMult == null || targetMultForPc > targetBossDprMult)) {
+      if (Number.isFinite(targetMultForPc) && (targetBossDprMult == null || targetMultForPc < targetBossDprMult)) {
         targetBossDprMult = targetMultForPc;
         targetAttackDpr = neededAttackDpr;
         toughestPcName = pc.Name || "?";
