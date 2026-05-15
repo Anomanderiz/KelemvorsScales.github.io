@@ -2407,21 +2407,8 @@
 
   function renderPacingResult(r) {
     // Metric values
-    setText(els.pacingBossHp, r.recommendedBossHp > 0 ? String(r.recommendedBossHp) : "N/A");
-    {
-      const mph = r.minionPhaseInfo;
-      let hpSub;
-      if (!mph) {
-        hpSub = `party eff. DPR ${r.effectivePartyDprOnBoss.toFixed(1)} × ${r.targetRounds} rounds`;
-      } else if (mph.replenishing && !mph.canClearPerRound) {
-        hpSub = `boss permanently screened by replenishing minions`;
-      } else if (mph.replenishing && mph.canClearPerRound) {
-        hpSub = `${mph.overflowBossPerRound.toFixed(1)} overflow/round × ${r.targetRounds} rounds (minions cleared each round)`;
-      } else {
-        hpSub = `${mph.minionPhaseRounds}R minion phase + ${r.effectivePartyDprOnBoss.toFixed(1)} eff. DPR × ${Math.max(0, r.targetRounds - mph.minionPhaseRounds)} remaining rounds`;
-      }
-      setText(els.pacingBossHpSub, hpSub);
-    }
+    setText(els.pacingBossHp, String(Math.round(r.currentBossHp)));
+    setText(els.pacingBossHpSub, r.recommendedBossHp > 0 ? `pacing target: ${r.recommendedBossHp}` : "pacing target: N/A");
 
     if (r.firstDownRound != null) {
       const fd = Math.ceil(r.firstDownRound);
@@ -2442,11 +2429,12 @@
     }
 
     const bossDprMult = Number.isFinite(r.bossDprMult) ? r.bossDprMult : 1;
-    setText(els.pacingTargetDpr, Number.isFinite(r.targetBossDprMult) ? `${r.targetBossDprMult.toFixed(2)}x` : "N/A");
-    const currentDprHint = r.toughestPcName
-      ? `current ${bossDprMult.toFixed(2)}x; ${r.toughestPcName} wipe budget ${(r.targetRounds * 1.35).toFixed(1)}R`
-      : "no boss damage";
-    setText(els.pacingTargetDprSub, currentDprHint);
+    setText(els.pacingTargetDpr, `${bossDprMult.toFixed(2)}x`);
+    const targetMultNote = Number.isFinite(r.targetBossDprMult) ? `pacing target: ${r.targetBossDprMult.toFixed(2)}x` : "pacing target: N/A";
+    const dprHint = r.toughestPcName
+      ? `${targetMultNote} · ${r.toughestPcName} budget ${(r.targetRounds * 1.35).toFixed(1)}R`
+      : targetMultNote;
+    setText(els.pacingTargetDprSub, dprHint);
 
     // Balance analysis
     renderPacingBalance(r);
