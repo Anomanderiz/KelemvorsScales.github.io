@@ -29,6 +29,11 @@
       { Name: "Claw",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d6+5",  "Uses/round": 2, "Melee?": true,  "Enabled?": true },
       { Name: "Fire Breath", Type: "save",   "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6",    "Uses/round": 1, "Melee?": false, "Enabled?": true },
     ],
+    legendary_action_budget: 3,
+    legendary_actions_table: [
+      { Name: "Tail Swipe", Type: "attack", "Attack bonus": 7, Crit: 20, DC: 0, Save: "DEX", Damage: "1d8+5", Cost: 1, "Uses/round": 1, "Enabled?": false },
+      { Name: "Wing Burst", Type: "save", "Attack bonus": 0, Crit: 20, DC: 15, Save: "DEX", Damage: "2d6+3", Cost: 2, "Uses/round": 1, "Enabled?": false },
+    ],
     party_dpr_table: [
       { Member: "Fighter", Damage: "1d8+5" },
       { Member: "Rogue",   Damage: "3d6+5" },
@@ -162,6 +167,19 @@
     { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
   ];
 
+  const LEGENDARY_COLUMNS = [
+    { key: "Name", label: "Name", type: "text", parser: (v) => String(v).trim() },
+    { key: "Type", label: "Type", type: "select", options: ["attack", "save"], parser: (v) => (String(v).toLowerCase() === "save" ? "save" : "attack") },
+    { key: "Attack bonus", label: "Atk Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Crit", label: "Crit >=", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
+    { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
+    { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
+    { key: "Cost", label: "Cost", type: "number", step: "1", min: "1", max: "4", parser: (v) => clamp(safeInt(v, 1), 1, 4) },
+    { key: "Uses/round", label: "Use/R", type: "number", step: "1", min: "0", max: "1", parser: (v) => clamp(safeInt(v, 1), 0, 1) },
+    { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
+  ];
+
   const MECHANIC_TYPES = ["auto", "attack", "save"];
   const PHASE_COLUMNS = [
     { key: "Round", label: "Round", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
@@ -241,7 +259,7 @@
     const ids = [
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
-      "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable", "btnAddPhaseMechanic", "phaseTable",
+      "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable", "optLegendaryBudget", "btnAddLegendaryAction", "legendaryTable", "btnAddPhaseMechanic", "phaseTable",
       "optModeSelect", "optSpreadTargets", "optThpExpr", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
       "optLairEnabled", "optLairAvg", "optLairFormula", "optLairTargets", "optLairEveryN",
       "optRechEnabled", "optRechargeText", "optRechAvg", "optRechFormula", "optRechTargets",
@@ -374,6 +392,25 @@
       setStatus("Added limited ability row.", 1500);
     });
 
+    els.btnAddLegendaryAction.addEventListener("click", () => {
+      state.legendary_actions_table.push({
+        Name: "Legendary Attack",
+        Type: "attack",
+        "Attack bonus": 6,
+        Crit: 20,
+        DC: 0,
+        Save: "DEX",
+        Damage: "1d8+4",
+        Cost: 1,
+        "Uses/round": 1,
+        "Enabled?": true,
+      });
+      persistState();
+      renderLegendarySection();
+      refreshReport();
+      setStatus("Added legendary action.", 1500);
+    });
+
     els.btnAddPhaseMechanic.addEventListener("click", () => {
       state.phase_table.push({
         Round: 3,
@@ -433,6 +470,7 @@
     bindControl("optResistFactor", "resist_factor", (el) => Math.max(0.01, safeFloat(el.value, 1.0)), { refreshEff: true });
     bindControl("optBossRegen", "boss_regen", (el) => Math.max(0, safeFloat(el.value, 0.0)), { refreshEff: true });
     bindControl("optBossDprMult", "boss_dpr_mult", (el) => clamp(safeFloat(el.value, 1.0), 0, 20));
+    bindControl("optLegendaryBudget", "legendary_action_budget", (el) => clamp(safeInt(el.value, 3), 1, 4));
 
     bindControl("optLairEnabled", "lair_enabled", (el) => Boolean(el.checked));
     bindControl("optLairAvg", "lair_avg", (el) => {
@@ -563,6 +601,7 @@
     syncControlsFromState();
     renderPartySection();
     renderAttackSection();
+    renderLegendarySection();
     renderPhaseSection();
     refreshMcTargets();
     refreshEffTableFromMode();
@@ -579,6 +618,7 @@
     setControlValue(els.optResistFactor, state.resist_factor);
     setControlValue(els.optBossRegen, state.boss_regen);
     setControlValue(els.optBossDprMult, state.boss_dpr_mult);
+    setControlValue(els.optLegendaryBudget, state.legendary_action_budget);
 
     setControlChecked(els.optLairEnabled, state.lair_enabled);
     setControlValue(els.optLairAvg, state.lair_avg);
@@ -715,7 +755,30 @@
     });
   }
 
+  function renderLegendarySection() {
+    renderEditableTable({
+      mount: els.legendaryTable,
+      columns: LEGENDARY_COLUMNS,
+      rows: state.legendary_actions_table,
+      showRemove: true,
+      onCellChange: (rowIndex, key, value) => {
+        state.legendary_actions_table[rowIndex][key] = value;
+        state.legendary_actions_table[rowIndex] = sanitizeLegendaryRow(state.legendary_actions_table[rowIndex]);
+        persistState();
+        refreshReport();
+      },
+      onRemoveRow: (rowIndex) => {
+        state.legendary_actions_table.splice(rowIndex, 1);
+        persistState();
+        renderLegendarySection();
+        refreshReport();
+      },
+      emptyMessage: "No legendary actions configured.",
+    });
+  }
+
   function renderEditableTable({ mount, columns, rows, onCellChange, onRemoveRow, showRemove, emptyMessage }) {
+    if (!mount) return;
     mount.innerHTML = "";
     if (!rows.length) {
       const empty = document.createElement("div");
@@ -908,6 +971,7 @@
 
   function computeDeterministic() {
     const attacks = attacksEnabledFromTable(state.attacks_table);
+    const legendary = legendaryActionsEnabledFromTable(state.legendary_actions_table);
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const dprMult = bossDprMultiplier(state);
@@ -922,9 +986,10 @@
 
     for (const pc of party) {
       const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, horizonRounds);
+      const legendaryDpr = legendaryActionsPerTargetDpr(pc, state.mode_select || "normal", legendary, state.legendary_action_budget);
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, horizonRounds);
       const minionDpr = minionDprVsPc(pc);
-      const total = (baseDpr / spread + lairRechDpr + minionDpr + phaseDpr) * dprMult;
+      const total = ((baseDpr + legendaryDpr) / spread + lairRechDpr + minionDpr + phaseDpr) * dprMult;
       const net = Math.max(0, total - thpAvg);
       const hp = Math.max(1, safeInt(pc.HP, 1));
       const exact = net > 0 ? hp / net : Number.POSITIVE_INFINITY;
@@ -935,6 +1000,7 @@
         AC: safeInt(pc.AC, 10),
         HP: hp,
         "DPR (attacks)": round2(baseDpr / spread),
+        "DPR (legendary)": round2(legendaryDpr / spread),
         "DPR (mechanics)": round2(phaseDpr),
         "DPR (total)": round2(total),
         "Net DPR (after THP)": round2(net),
@@ -1388,6 +1454,8 @@
         return;
       }
       changes.push(...minionTune.changes);
+      const legendaryTune = tuneLegendaryActionsForBossMode();
+      changes.push(...legendaryTune.changes);
       let pacingResult = computePacingResult();
 
       if (!Number.isFinite(pacingResult.recommendedBossHp) || pacingResult.recommendedBossHp <= 0) {
@@ -1422,6 +1490,7 @@
       syncControlsFromState();
       persistState();
       renderAttackSection();
+      renderLegendarySection();
       renderPhaseSection();
       refreshEffTableFromMode();
       refreshReport();
@@ -1466,6 +1535,10 @@
 
   function runMcSim(pcRow, attacks, opts) {
     const mechanics = phaseMechanicsEnabledFromTable(opts.phase_table);
+    const legendary = selectedLegendaryActions(
+      legendaryActionsEnabledFromTable(opts.legendary_actions_table),
+      opts.legendary_action_budget
+    );
     const trials = Math.max(1000, safeInt(opts.mc_trials, 10000));
     const rounds = Math.max(1, safeInt(opts.mc_rounds, 3));
     const ac = Math.max(1, safeInt(pcRow.AC, 10));
@@ -1533,6 +1606,30 @@
           }
         }
 
+        for (const action of legendary) {
+          if (Math.random() >= 1 / spreadTargets) continue;
+          if (action.kind === "save") {
+            const bonus = saveBonuses[String(action.save_stat || "DEX").toUpperCase()] || 0;
+            const roll = randomInt(1, 20);
+            const success = roll === 20 || (roll !== 1 && roll + bonus >= action.dc);
+            const dmg = rollDamageOne(action.damage_expr);
+            roundDamage += success ? 0.5 * dmg : dmg;
+            continue;
+          }
+
+          const r1 = randomInt(1, 20);
+          const r2 = randomInt(1, 20);
+          let roll = r1;
+          if (currentMode === "adv") roll = Math.max(r1, r2);
+          if (currentMode === "dis") roll = Math.min(r1, r2);
+
+          const isCrit = roll >= (action.crit_threshold ?? 20);
+          const isHit = isCrit || (roll !== 1 && roll + action.attack_bonus >= currentAc);
+          if (isHit) {
+            roundDamage += isCrit ? rollDamageCrunchyCritOne(action.damage_expr) : rollDamageOne(action.damage_expr);
+          }
+        }
+
         if (opts.lair_enabled && rnd % Math.max(1, safeInt(opts.lair_every_n, 1)) === 0) {
           const pTarget = Math.min(1, safeFloat(opts.lair_targets, 1) / spreadTargets);
           if (Math.random() < pTarget) {
@@ -1574,12 +1671,16 @@
       return { error: "Add at least one party member in Party & DPR." };
     }
 
-    const attacks = attacksEnabledFromTable(state.attacks_table);
+    const attacks = attacksEnabledFromTable(opts.attacks_table);
+    const legendary = selectedLegendaryActions(
+      legendaryActionsEnabledFromTable(opts.legendary_actions_table),
+      opts.legendary_action_budget
+    );
     const mechanics = phaseMechanicsEnabledFromTable(opts.phase_table);
     const hasMinionDamage = Math.max(0, safeInt(opts.minion_count, 0)) > 0
       && (Boolean(opts.minion_atk_enabled) || Boolean(opts.minion_save_enabled));
-    if (!attacks.length && !mechanics.length && !opts.lair_enabled && !opts.rech_enabled && !hasMinionDamage) {
-      return { error: "Enable at least one attack, round mechanic, lair action, recharge power, or damaging minion pack." };
+    if (!attacks.length && !legendary.length && !mechanics.length && !opts.lair_enabled && !opts.rech_enabled && !hasMinionDamage) {
+      return { error: "Enable at least one attack, legendary action, round mechanic, lair action, recharge power, or damaging minion pack." };
     }
 
     const trials = Math.max(1, safeInt(opts.enc_trials, 10000));
@@ -1826,6 +1927,18 @@
           }
         }
 
+        for (const action of legendary) {
+          let alivePool = roundPool.filter((idx) => pcsAlive[t][idx]);
+          if (!alivePool.length) {
+            alivePool = aliveIndicesForTrial(pcsAlive[t]);
+            if (!alivePool.length) break;
+          }
+
+          const target = alivePool[randomInt(0, alivePool.length - 1)];
+          const rawDealt = rollBossActionDamageForTarget(action, target, currentAc, currentMode, pcSaves, saveIndex);
+          applyDamage(target, Math.max(0, rawDealt * dprMult));
+        }
+
         for (const mech of mechanicsForRound(mechanics, rnd)) {
           aliveNow = aliveIndicesForTrial(pcsAlive[t]);
           if (!aliveNow.length) break;
@@ -1981,6 +2094,7 @@
 
     // Per-PC TTD at current boss DPR
     const attacks = attacksEnabledFromTable(state.attacks_table);
+    const legendary = legendaryActionsEnabledFromTable(state.legendary_actions_table);
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
@@ -2002,9 +2116,10 @@
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
       const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, targetRounds);
+      const rawLegendaryDpr = legendaryActionsPerTargetDpr(pc, state.mode_select || "normal", legendary, state.legendary_action_budget);
       const rawPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, targetRounds);
       const pcMinionDpr = minionDprVsPc(pc);
-      const rawIncomingPerPc = rawAttackDpr / spread + lairRechDpr + pcMinionDpr + rawPhaseDpr;
+      const rawIncomingPerPc = (rawAttackDpr + rawLegendaryDpr) / spread + lairRechDpr + pcMinionDpr + rawPhaseDpr;
       const totalDprPerPc = rawIncomingPerPc * dprMult;
       const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
       const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
@@ -2035,6 +2150,7 @@
         HP: pcHp,
         AC: safeInt(pc.AC, 10),
         "Base DPR/target": round2(rawIncomingPerPc),
+        "Legendary DPR": round2(rawLegendaryDpr / spread),
         "Script DPR": round2(rawPhaseDpr),
         "Minion DPR": round2(pcMinionDpr * dprMult),
         "Scaled DPR/target": round2(totalDprPerPc),
@@ -2081,6 +2197,7 @@
 
   function projectedPartyWipeRound(mult, horizonRounds = 5) {
     const attacks = attacksEnabledFromTable(state.attacks_table);
+    const legendary = legendaryActionsEnabledFromTable(state.legendary_actions_table);
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     if (!party.length) return Infinity;
@@ -2096,9 +2213,10 @@
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
       const attackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, rounds);
+      const legendaryDpr = legendaryActionsPerTargetDpr(pc, state.mode_select || "normal", legendary, state.legendary_action_budget);
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, rounds);
       const minionDpr = minionDprVsPc(pc);
-      const rawIncoming = attackDpr / spread + phaseDpr + minionDpr + lairRechDpr;
+      const rawIncoming = (attackDpr + legendaryDpr) / spread + phaseDpr + minionDpr + lairRechDpr;
       const net = Math.max(0, rawIncoming * dprMult - thpAvg);
       if (net <= 0) return Infinity;
       const ttd = pcHp / net;
@@ -2255,6 +2373,10 @@
       ...row,
       Damage: scaleDamageExpression(row.Damage, mult),
     })).map(sanitizeAttackRow);
+    state.legendary_actions_table = state.legendary_actions_table.map((row) => ({
+      ...row,
+      Damage: scaleDamageExpression(row.Damage, mult),
+    })).map(sanitizeLegendaryRow);
     state.phase_table = state.phase_table.map((row) => ({
       ...row,
       Damage: scaleDamageExpression(row.Damage, mult),
@@ -2269,6 +2391,7 @@
     syncControlsFromState();
     persistState();
     renderAttackSection();
+    renderLegendarySection();
     renderPhaseSection();
     refreshReport();
     runComputePacing();
@@ -2284,6 +2407,13 @@
       const nextDamage = scaleDamageExpressionStatic(oldDamage, mult);
       if (nextDamage !== oldDamage) changes.push(`${row.Name || "Attack"} damage: ${oldDamage} -> ${nextDamage}`);
       return sanitizeAttackRow({ ...row, Damage: nextDamage });
+    });
+
+    state.legendary_actions_table = state.legendary_actions_table.map((row) => {
+      const oldDamage = String(row.Damage || "0");
+      const nextDamage = scaleDamageExpressionStatic(oldDamage, mult);
+      if (Boolean(row["Enabled?"]) && nextDamage !== oldDamage) changes.push(`${row.Name || "Legendary action"} damage: ${oldDamage} -> ${nextDamage}`);
+      return sanitizeLegendaryRow({ ...row, Damage: nextDamage });
     });
 
     state.phase_table = state.phase_table.map((row) => {
@@ -2320,6 +2450,103 @@
       ? "Converted damage to one-die static formulas"
       : `Baked ${mult.toFixed(2)}x DPR into one-die static formulas`;
     return [header, ...changes];
+  }
+
+  function tuneLegendaryActionsForBossMode() {
+    const rows = (state.legendary_actions_table || []).map(sanitizeLegendaryRow);
+    state.legendary_actions_table = rows;
+    const budget = clamp(safeInt(state.legendary_action_budget, 3), 1, 4);
+    state.legendary_action_budget = budget;
+    const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
+    const candidates = [];
+
+    rows.forEach((row, index) => {
+      if (!Boolean(row["Enabled?"])) return;
+      const action = legendaryActionFromRow({ ...row, "Uses/round": 1 });
+      const expected = expectedLegendaryActionVsParty(action, party);
+      candidates.push({
+        index,
+        action,
+        cost: action.cost,
+        expected,
+      });
+    });
+
+    const oldUses = rows.map((row) => clamp(safeInt(row["Uses/round"], 0), 0, 1));
+    rows.forEach((row) => {
+      row["Uses/round"] = 0;
+    });
+
+    const selected = chooseLegendaryPlan(candidates, budget);
+    for (const item of selected.items) {
+      rows[item.index]["Uses/round"] = 1;
+    }
+
+    const usesChanged = rows.some((row, index) => clamp(safeInt(row["Uses/round"], 0), 0, 1) !== oldUses[index]);
+    const summary = legendaryPlanSummary(rows, budget);
+    const changes = [];
+    if (candidates.length) {
+      changes.push(`Legendary actions/round: ${summary}`);
+    }
+    if (usesChanged) {
+      state.legendary_actions_table = rows.map(sanitizeLegendaryRow);
+    }
+    return { changes, selectedCost: selected.cost, budget };
+  }
+
+  function expectedLegendaryActionVsParty(action, party) {
+    const pcs = (party || []).filter((pc) => String(pc.Name || "").trim().length > 0);
+    if (!pcs.length) return averageDamage(action.damage_expr);
+    const mode = state.mode_select || "normal";
+    let total = 0;
+    for (const pc of pcs) {
+      total += expectedBossActionDamageVsPc(action, pc, mode);
+    }
+    return total / pcs.length;
+  }
+
+  function chooseLegendaryPlan(candidates, budget) {
+    const cap = clamp(safeInt(budget, 3), 1, 4);
+    const dp = Array.from({ length: cap + 1 }, () => null);
+    dp[0] = { items: [], cost: 0, expected: 0 };
+
+    for (const item of candidates || []) {
+      const itemCost = clamp(safeInt(item.cost, 1), 1, 4);
+      for (let cost = cap; cost >= itemCost; cost -= 1) {
+        if (!dp[cost - itemCost]) continue;
+        const candidate = {
+          items: [...dp[cost - itemCost].items, item],
+          cost,
+          expected: dp[cost - itemCost].expected + Math.max(0, safeFloat(item.expected, 0)),
+        };
+        if (isBetterLegendaryPlan(candidate, dp[cost])) {
+          dp[cost] = candidate;
+        }
+      }
+    }
+
+    let best = dp[0];
+    for (const plan of dp) {
+      if (isBetterLegendaryPlan(plan, best)) best = plan;
+    }
+    return best || { items: [], cost: 0, expected: 0 };
+  }
+
+  function isBetterLegendaryPlan(candidate, current) {
+    if (!candidate) return false;
+    if (!current) return true;
+    if (candidate.cost !== current.cost) return candidate.cost > current.cost;
+    if (candidate.items.length !== current.items.length) return candidate.items.length > current.items.length;
+    return candidate.expected > current.expected + 1e-9;
+  }
+
+  function legendaryPlanSummary(rows, budget) {
+    const enabled = (rows || []).filter((row) => Boolean(row["Enabled?"]));
+    if (!enabled.length) return "none configured";
+    const spent = enabled.reduce((acc, row) => acc + (clamp(safeInt(row["Uses/round"], 0), 0, 1) ? clamp(safeInt(row.Cost, 1), 1, 4) : 0), 0);
+    const details = enabled.map((row) => `${row.Name || "Legendary"} ${clamp(safeInt(row["Uses/round"], 0), 0, 1)}`).join(", ");
+    const unspent = spent < budget ? `, ${budget - spent} LA unspent` : "";
+    return `${details} (${spent}/${budget} LA${unspent})`;
   }
 
   function tuneMinionsForBossMode(targetRound) {
@@ -3050,6 +3277,28 @@
     return isCrit ? rollDamageCrunchyCritOne(mech.damage_expr) : rollDamageOne(mech.damage_expr);
   }
 
+  function rollBossActionDamageForTarget(action, target, currentAc, currentMode, pcSaves, saveIndex) {
+    if ((action && action.kind) === "save") {
+      const saveIdx = saveIndex[String(action.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
+      const bonus = pcSaves[target][saveIdx];
+      const roll = randomInt(1, 20);
+      const success = roll === 20 || (roll !== 1 && roll + bonus >= action.dc);
+      const dmg = rollDamageOne(action.damage_expr);
+      return success ? 0.5 * dmg : dmg;
+    }
+
+    const r1 = randomInt(1, 20);
+    const r2 = randomInt(1, 20);
+    let r = r1;
+    if (currentMode[target] === "adv") r = Math.max(r1, r2);
+    if (currentMode[target] === "dis") r = Math.min(r1, r2);
+
+    const isCrit = r >= (action.crit_threshold ?? 20);
+    const isHit = isCrit || (r !== 1 && r + action.attack_bonus >= currentAc[target]);
+    if (!isHit) return 0;
+    return isCrit ? rollDamageCrunchyCritOne(action.damage_expr) : rollDamageOne(action.damage_expr);
+  }
+
   function bossDprMultiplier(opts) {
     return clamp(safeFloat(opts && opts.boss_dpr_mult, 1.0), 0, 20);
   }
@@ -3093,7 +3342,7 @@
 
   function attacksEnabledFromTable(tbl) {
     const out = [];
-    for (const row of tbl) {
+    for (const row of tbl || []) {
       if (!Boolean(row["Enabled?"])) continue;
 
       const saveStatRaw = String(row.Save || "DEX").toUpperCase();
@@ -3115,9 +3364,68 @@
     return out;
   }
 
+  function legendaryActionsEnabledFromTable(tbl) {
+    const out = [];
+    for (const row of tbl || []) {
+      if (!Boolean(row["Enabled?"])) continue;
+      out.push(legendaryActionFromRow(row));
+    }
+    return out;
+  }
+
+  function legendaryActionFromRow(row) {
+    const saveStatRaw = String(row.Save || "DEX").toUpperCase();
+    const saveStat = SAVE_KEYS.includes(saveStatRaw) ? saveStatRaw : "DEX";
+    return {
+      name: String(row.Name || "Legendary Action"),
+      kind: String(row.Type || "attack").toLowerCase() === "save" ? "save" : "attack",
+      attack_bonus: safeInt(row["Attack bonus"], 0),
+      dc: safeInt(row.DC, 0),
+      save_stat: saveStat,
+      damage_expr: String(row.Damage || "1d6"),
+      cost: clamp(safeInt(row.Cost, 1), 1, 4),
+      uses_per_round: clamp(safeInt(row["Uses/round"], 1), 0, 1),
+      crit_threshold: Math.max(2, Math.min(20, safeInt(row.Crit, 20))),
+    };
+  }
+
+  function selectedLegendaryActions(actions, budget) {
+    let remaining = clamp(safeInt(budget, 3), 1, 4);
+    const selected = [];
+    for (const action of actions || []) {
+      if (safeInt(action.uses_per_round, 0) <= 0) continue;
+      const cost = clamp(safeInt(action.cost, 1), 1, 4);
+      if (cost > remaining) continue;
+      selected.push(action);
+      remaining -= cost;
+    }
+    return selected;
+  }
+
+  function legendaryActionsPerTargetDpr(pcRow, mode, actions, budget) {
+    let total = 0;
+    for (const action of selectedLegendaryActions(actions, budget)) {
+      total += expectedBossActionDamageVsPc(action, pcRow, mode);
+    }
+    return total;
+  }
+
   function getSaveBonus(pcRow, stat) {
     const key = String(stat || "DEX").toUpperCase();
     return safeInt(pcRow[key], 0);
+  }
+
+  function expectedBossActionDamageVsPc(action, pcRow, mode) {
+    if ((action && action.kind) === "save") {
+      return expectedSaveHalfDamage(action.dc, getSaveBonus(pcRow, action.save_stat), action.damage_expr);
+    }
+    return expectedAttackDamage(
+      Math.max(1, safeInt(pcRow.AC, 10)),
+      safeInt(action && action.attack_bonus, 0),
+      action && action.damage_expr,
+      mode,
+      action && action.crit_threshold
+    );
   }
 
   function expectedAttackDamage(ac, attackBonus, dmgExpr, mode = "normal", critThreshold = 20) {
@@ -3578,6 +3886,7 @@
     if (!els.reportText) return;
     const payload = {
       ...state,
+      _legendary_action_plan: legendaryPlanSummary(state.legendary_actions_table, state.legendary_action_budget),
       _tight_pacing_advice: tightPacingAdviceText().trim(),
     };
     els.reportText.value = JSON.stringify(payload, null, 2);
@@ -3632,6 +3941,8 @@
 
     base.party_table = (base.party_table || []).map(sanitizePartyRow);
     base.attacks_table = (base.attacks_table || []).map(sanitizeAttackRow);
+    base.legendary_action_budget = clamp(safeInt(base.legendary_action_budget, 3), 1, 4);
+    base.legendary_actions_table = (base.legendary_actions_table || []).map(sanitizeLegendaryRow);
     base.phase_table = (base.phase_table || []).map(sanitizePhaseRow);
     base.party_dpr_table = (base.party_dpr_table || []).map(sanitizeDprRow);
     base.party_nova_table = (base.party_nova_table || []).map(sanitizeNovaRow);
@@ -3823,6 +4134,21 @@
       "Melee?": Boolean(row["Melee?"]),
       "Enabled?": Boolean(row["Enabled?"]),
       "Crit": Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
+    };
+  }
+
+  function sanitizeLegendaryRow(row) {
+    return {
+      Name: String(row.Name || "Legendary Action").trim() || "Legendary Action",
+      Type: String(row.Type || "attack").toLowerCase() === "save" ? "save" : "attack",
+      "Attack bonus": safeInt(row["Attack bonus"], 0),
+      Crit: Math.max(2, Math.min(20, safeInt(row.Crit, 20))),
+      DC: safeInt(row.DC, 0),
+      Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
+      Damage: String(row.Damage || "1d6").trim() || "1d6",
+      Cost: clamp(safeInt(row.Cost, 1), 1, 4),
+      "Uses/round": clamp(safeInt(row["Uses/round"], 1), 0, 1),
+      "Enabled?": Boolean(row["Enabled?"]),
     };
   }
 
