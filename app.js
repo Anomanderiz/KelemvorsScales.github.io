@@ -5,6 +5,8 @@
   const NOVA_METHODS = ["attack", "save_half", "auto_hit"];
   const STORAGE_KEY = "kelemvor_scales_web_state_v1";
   const IS_WORKER = typeof document === "undefined" && typeof self !== "undefined";
+  const MIN_TARGET_ROUNDS = 5;
+  const MAX_TARGET_ROUNDS = 10;
 
   const DEFAULT_STATE = {
     party_table: [
@@ -241,7 +243,7 @@
       "mcTarget", "mcRounds", "mcTrials", "mcShowHist", "btnRunMc", "mcChart",
       "lblMcMean", "lblMcP95", "lblMcP99",
       "encTrials", "encMaxRounds", "encDprCv", "encInitiative", "encUseNova",
-      "tuneMedian", "tuneTpkCap", "tuneKillRate", "tuneBandMax",
+      "tuneTpkCap", "tuneKillRate", "tuneBandMax",
       "btnRunEncounter", "btnAutoTuneAll",
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
       "survChart", "ttkChart",
@@ -476,13 +478,12 @@
     });
     bindControl("encUseNova", "enc_use_nova", (el) => Boolean(el.checked));
 
-    bindControl("tuneMedian",    "tune_target_median", (el) => clamp(safeFloat(el.value, 5.0), 1.0, 20.0));
     bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
     bindControl("tuneKillRate",  "tune_kill_rate",     (el) => clamp(safeFloat(el.value, 0.75), 0.50, 0.95));
     bindControl("tuneBandMax",   "tune_band_max",      (el) => Math.max(0.5, safeFloat(el.value, 3.0)));
 
     bindControl("pacingRounds", "pacing_rounds", (el) => {
-      const rounds = clamp(safeInt(el.value, 5), 5, 10);
+      const rounds = targetEncounterRounds({ pacing_rounds: el.value, tune_target_median: state.tune_target_median });
       state.tune_target_median = rounds;
       return rounds;
     });
@@ -595,7 +596,6 @@
     setControlValue(els.encInitiative, state.initiative_mode);
     setControlChecked(els.encUseNova, state.enc_use_nova);
 
-    setControlValue(els.tuneMedian,    state.tune_target_median);
     setControlValue(els.tuneTpkCap,    state.tune_tpk_cap);
     setControlValue(els.tuneKillRate,  state.tune_kill_rate);
     setControlValue(els.tuneBandMax,   state.tune_band_max);
@@ -1121,7 +1121,7 @@
     setStatus("Auto-tuning encounter… Stage 1: boss DPR.", 0);
 
     // targetRound is mutable — the tuner may adjust it within [5, 10] for band compliance.
-    let targetRound      = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    let targetRound      = targetEncounterRounds();
     const origTarget     = targetRound;
     const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const tpkCap         = safeFloat(state.tune_tpk_cap, 0.05);
@@ -1308,8 +1308,11 @@
     }
     state.boss_hp    = tunedHp;
     state.enc_trials = originalTrials;
+    state.tune_target_median = targetRound;
+    state = normalizeState(state);
     syncControlsFromState();
     persistState();
+    refreshEffTableFromMode();
     refreshReport();
 
     // ── Stage 5: Final render + summary ────────────────────────────────────
@@ -1360,7 +1363,7 @@
     const originalMult = bossDprMultiplier(state);
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
     const quickTrials = Math.max(2500, Math.min(12000, Math.floor(originalTrials * 0.35)));
-    const targetRound = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const targetRound = targetEncounterRounds();
     const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const wipeTarget = targetRound + 1.5;
@@ -1562,12 +1565,15 @@
     if (Math.abs(tunedMult - originalMult) > 0.01) changes.push(`Boss DPR mult: ${originalMult.toFixed(2)}x -> ${tunedMult.toFixed(2)}x`);
 
     state.pacing_rounds = targetRound;
+    state.tune_target_median = targetRound;
     state.boss_hp = tunedHp;
     state.boss_dpr_mult = tunedMult;
     state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), targetRound + 3);
     state.enc_trials = originalTrials;
+    state = normalizeState(state);
     syncControlsFromState();
     persistState();
+    refreshEffTableFromMode();
     refreshReport();
 
     const finalMetrics = await runEncounterAndRender();
@@ -1744,7 +1750,7 @@
     const dprMult = bossDprMultiplier(opts);
     const bossMaxHp = Math.max(1, safeFloat(opts.boss_hp, 150));
     const tightPacing = Boolean(opts.tight_pacing_enabled);
-    const tightTargetRound = clamp(safeInt(opts.pacing_rounds, 5), 5, 10);
+    const tightTargetRound = targetEncounterRounds(opts);
     const tightCapPct = clamp(safeFloat(opts.tight_cap_pct, 0.24), 0.10, 0.40);
     const tightCapResources = Math.max(0, safeInt(opts.tight_cap_resources, 3));
     const tightAntiSlogMult = clamp(safeFloat(opts.tight_anti_slog_mult, 1.35), 1.0, 2.5);
@@ -2088,7 +2094,7 @@
   let _lastPacingResult = null;
 
   function computePacingResult() {
-    const targetRounds = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const targetRounds = targetEncounterRounds();
 
     // Effective party DPR on the boss
     const useNova = Boolean(state.enc_use_nova);
@@ -2503,7 +2509,7 @@
     if (!state.tight_pacing_enabled) return "";
     const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
     const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
-    const target = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const target = targetEncounterRounds();
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
     return `<div class="pacing-advice"><strong>Tight pacing table rule:</strong> Until round ${target}, the boss can burn ${resources} Legendary Resistance/Action pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. After round ${target}, remove that protection and make the boss collapse: damage that reaches boss HP is modeled at ${antiSlog.toFixed(2)}x per late round.</div>`;
   }
@@ -2512,7 +2518,7 @@
     if (!state.tight_pacing_enabled) return "";
     const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
     const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
-    const target = clamp(safeInt(state.pacing_rounds, 5), 5, 10);
+    const target = targetEncounterRounds();
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
     return `\n\nTable rule required for these numbers:\n- Until round ${target}, the boss may burn ${resources} Legendary Resistance/Action pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- After round ${target}, remove that protection and make the boss collapse: damage that reaches boss HP is modeled at ${antiSlog.toFixed(2)}x per late round.\n- If you do not run those mechanics, expect a wider p10-p90 spread than the tool reports.`;
   }
@@ -3651,12 +3657,17 @@
       ? String(base.initiative_mode)
       : "random";
 
-    base.tune_target_median = clamp(safeFloat(base.tune_target_median, 5.0), 1.0, 20.0);
+    const hasPacingRounds = Object.prototype.hasOwnProperty.call(src, "pacing_rounds");
+    base.tune_target_median = targetEncounterRounds({
+      pacing_rounds: hasPacingRounds ? base.pacing_rounds : base.tune_target_median,
+      tune_target_median: base.tune_target_median,
+    });
     base.tune_tpk_cap  = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
     base.tune_kill_rate = clamp(safeFloat(base.tune_kill_rate, 0.75), 0.50, 0.95);
     base.tune_band_max  = Math.max(0.5, safeFloat(base.tune_band_max, 3.0));
 
-    base.pacing_rounds = clamp(safeInt(base.pacing_rounds, 5), 5, 10);
+    base.pacing_rounds = base.tune_target_median;
+    base.tune_target_median = base.pacing_rounds;
     base.tight_pacing_enabled = Object.prototype.hasOwnProperty.call(src, "tight_pacing_enabled")
       ? Boolean(base.tight_pacing_enabled)
       : true;
@@ -3895,6 +3906,12 @@
 
   function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
+  }
+
+  function targetEncounterRounds(source = state) {
+    const src = source && typeof source === "object" ? source : {};
+    const fallback = safeInt(src.tune_target_median, DEFAULT_STATE.tune_target_median);
+    return clamp(safeInt(src.pacing_rounds, fallback), MIN_TARGET_ROUNDS, MAX_TARGET_ROUNDS);
   }
 
   function round2(v) {
