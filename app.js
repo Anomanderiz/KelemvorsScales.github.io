@@ -7,6 +7,11 @@
   const IS_WORKER = typeof document === "undefined" && typeof self !== "undefined";
   const MIN_TARGET_ROUNDS = 5;
   const MAX_TARGET_ROUNDS = 10;
+  const BOSS_TUNE_MIN_ROUNDS = 7;
+  const BOSS_TUNE_MAX_ROUNDS = 10;
+  const FIRST_PC_DANGER_GRACE_ROUNDS = 1;
+  const TPK_GRACE_MIN_ROUNDS = 3;
+  const TPK_GRACE_MAX_ROUNDS = 4;
 
   const DEFAULT_STATE = {
     party_table: [
@@ -242,7 +247,7 @@
       "lblIncoming", "lblRoundsExact", "lblRoundsCeil",
       "mcTarget", "mcRounds", "mcTrials", "mcShowHist", "btnRunMc", "mcChart",
       "lblMcMean", "lblMcP95", "lblMcP99",
-      "encTrials", "encMaxRounds", "encDprCv", "encInitiative", "encUseNova",
+      "encTrials", "encMaxRounds", "encDprCv", "encInitiative", "encUseNova", "tightPacingEnabled",
       "tuneTpkCap", "tuneKillRate", "tuneBandMax",
       "btnRunEncounter", "btnAutoTuneAll",
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns",
@@ -477,6 +482,7 @@
       return ["random", "party_first", "boss_first"].includes(v) ? v : "random";
     });
     bindControl("encUseNova", "enc_use_nova", (el) => Boolean(el.checked));
+    bindControl("tightPacingEnabled", "tight_pacing_enabled", (el) => Boolean(el.checked));
 
     bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
     bindControl("tuneKillRate",  "tune_kill_rate",     (el) => clamp(safeFloat(el.value, 0.75), 0.50, 0.95));
@@ -595,6 +601,7 @@
     setControlValue(els.encDprCv, state.dpr_cv);
     setControlValue(els.encInitiative, state.initiative_mode);
     setControlChecked(els.encUseNova, state.enc_use_nova);
+    setControlChecked(els.tightPacingEnabled, state.tight_pacing_enabled);
 
     setControlValue(els.tuneTpkCap,    state.tune_tpk_cap);
     setControlValue(els.tuneKillRate,  state.tune_kill_rate);
@@ -1362,14 +1369,15 @@
     const originalHp = Math.max(1, safeInt(state.boss_hp, 150));
     const originalMult = bossDprMultiplier(state);
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
-    const quickTrials = Math.max(2500, Math.min(12000, Math.floor(originalTrials * 0.35)));
-    const targetRound = targetEncounterRounds();
+    const targetRound = bossTuneTargetRounds();
     const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const changes = [];
     const runner = createEncounterWorkerRunner();
 
     try {
+      state.pacing_rounds = targetRound;
+      state.tune_target_median = targetRound;
       let pacingResult = computePacingResult();
       const minionCount = Math.max(0, safeInt(state.minion_count, 0));
       if (minionCount > 0 && Boolean(state.minion_replenish)) {
@@ -1399,40 +1407,10 @@
         ? round2(clamp(pacingResult.targetBossDprMult, 0, 20))
         : round2(clamp(originalMult, 0, 20));
       let tunedHp = pacingHp;
-      let tunedMult = pacingMult;
-      let tpkConstrained = false;
-
-      const runCheck = async (mult, trials = quickTrials) => {
-        const metrics = await runner.run({
-          boss_hp: tunedHp,
-          boss_dpr_mult: clamp(safeFloat(mult, 1), 0, 20),
-          enc_trials: Math.max(1000, Math.round(trials)),
-          enc_max_rounds: Math.max(safeInt(state.enc_max_rounds, 12), targetRound + 3),
-        });
-        return metrics && !metrics.error ? metrics : null;
-      };
-
-      setStatus("Auto-tuning encounter... checking TPK cap.", 0);
-      let check = await runCheck(tunedMult);
-      if (check && check.tpkProb > tpkCap && tunedMult > 0) {
-        const zero = await runCheck(0, Math.max(1000, Math.floor(quickTrials * 0.6)));
-        if (zero && zero.tpkProb <= tpkCap) {
-          let lo = 0;
-          let hi = tunedMult;
-          for (let i = 0; i < 12; i += 1) {
-            const mid = (lo + hi) / 2;
-            const r = await runCheck(mid, Math.max(1000, Math.floor(quickTrials * 0.75)));
-            if (r && r.tpkProb <= tpkCap) lo = mid;
-            else hi = mid;
-          }
-          tunedMult = round2(clamp(lo, 0, 20));
-          tpkConstrained = tunedMult < pacingMult - 0.01;
-        }
-      }
+      const tunedMult = pacingMult;
 
       if (tunedHp !== originalHp) changes.push(`Boss HP: ${originalHp} -> ${tunedHp}`);
       if (Math.abs(tunedMult - originalMult) > 0.01) changes.push(`Boss DPR mult: ${originalMult.toFixed(2)}x -> ${tunedMult.toFixed(2)}x`);
-      if (tpkConstrained) changes.push(`Boss DPR capped below pacing target ${pacingMult.toFixed(2)}x to satisfy TPK cap`);
 
       state.pacing_rounds = targetRound;
       state.tune_target_median = targetRound;
@@ -1440,6 +1418,10 @@
       state.boss_dpr_mult = tunedMult;
       state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), targetRound + 3);
       state.enc_trials = originalTrials;
+      state.tight_pacing_enabled = true;
+      state.tight_cap_pct = round2(1 / BOSS_TUNE_MIN_ROUNDS);
+      state.tight_cap_resources = 6;
+      state.tight_anti_slog_mult = 2.0;
       state = normalizeState(state);
       syncControlsFromState();
       persistState();
@@ -1467,8 +1449,8 @@
       const bandLine = finalBand > bandTarget + 0.5
         ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; damage variance is too high for tighter pacing without changing mechanics.`
         : "";
-      const safetyLine = tpkConstrained
-        ? `\n\nTPK safety reduced DPR below the pacing target. If the verdict is easy, the configured TPK cap is stricter than the selected pacing pressure.`
+      const tpkAdvice = finalTpk > tpkCap
+        ? `\n\nTPK exceeds the configured cap, but Tune Everything preserved boss-fight pressure: lowering DPR would make the party survive too long. Reduce damage variance, add healing/resources, or accept a higher cap.`
         : "";
 
       alert(
@@ -1477,7 +1459,7 @@
         `p10-p90: ${Number.isFinite(finalP10) ? finalP10.toFixed(1) : "inf"}-${Number.isFinite(finalP90) ? finalP90.toFixed(1) : "inf"}R\n` +
         `${tpkLine} | Projected party wipe: ${Number.isFinite(finalProjectedWipe) ? finalProjectedWipe.toFixed(1) : "inf"}R | Kill by target: ${(100 * finalKillByTarget).toFixed(1)}%` +
         bandLine +
-        safetyLine +
+        tpkAdvice +
         tightPacingAdviceText()
       );
       setStatus(`Auto-tune complete. HP=${state.boss_hp}, DPR=${state.boss_dpr_mult.toFixed(2)}x.`, 5000);
@@ -1617,6 +1599,7 @@
     const bossMaxHp = Math.max(1, safeFloat(opts.boss_hp, 150));
     const tightPacing = Boolean(opts.tight_pacing_enabled);
     const tightTargetRound = targetEncounterRounds(opts);
+    const tightMinRound = Math.min(BOSS_TUNE_MIN_ROUNDS, tightTargetRound);
     const tightCapPct = clamp(safeFloat(opts.tight_cap_pct, 0.24), 0.10, 0.40);
     const tightCapResources = Math.max(0, safeInt(opts.tight_cap_resources, 3));
     const tightAntiSlogMult = clamp(safeFloat(opts.tight_anti_slog_mult, 1.35), 1.0, 2.5);
@@ -1714,6 +1697,12 @@
         }
         bossDamageThisRound[t] += bossDamage;
         bossHp[t] -= bossDamage;
+        if (tightPacing && roundNumber < tightMinRound && bossHp[t] <= 0) {
+          bossHp[t] = 1;
+        }
+        if (tightPacing && roundNumber >= tightTargetRound && bossHp[t] > 0 && bossDamageThisRound[t] > 0) {
+          bossHp[t] = 0;
+        }
       }
 
       if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
@@ -2007,8 +1996,11 @@
     let lastDownRound = 0;
     let targetAttackDpr = 0;
     let targetBossDprMult = null;
+    let firstPcDangerMult = Infinity;
+    let tpkPressureMult = null;
     let toughestPcName = null;
-    const wipeBudgetRound = targetRounds * 1.35;
+    const firstDangerRound = targetFirstPcDangerRound(targetRounds);
+    const wipeBudgetRound = targetPartyWipeRound(targetRounds);
     const pcRows = [];
 
     for (const pc of party) {
@@ -2026,20 +2018,22 @@
         lastDownRound = Math.max(lastDownRound, pcTtd);
       }
 
-      // Target total boss pressure so deterministic party wipe lands after the
-      // intended fight length. This keeps pressure meaningful without making
-      // "boss dies on target round" equivalent to a deterministic TPK.
-      const neededNetDpr = pcHp / wipeBudgetRound;
-      const targetMultForPc = rawIncomingPerPc > 0
-        ? Math.max(0, (neededNetDpr + thpAvg) / rawIncomingPerPc)
+      const targetMultForWipe = rawIncomingPerPc > 0
+        ? Math.max(0, (pcHp / wipeBudgetRound + thpAvg) / rawIncomingPerPc)
         : Infinity;
-      const neededAttackDpr = Number.isFinite(targetMultForPc) ? rawIncomingPerPc * targetMultForPc : 0;
-      if (Number.isFinite(targetMultForPc) && (targetBossDprMult == null || targetMultForPc > targetBossDprMult)) {
-        targetBossDprMult = targetMultForPc;
-        targetAttackDpr = neededAttackDpr;
+      const targetMultForFirstDanger = rawIncomingPerPc > 0
+        ? Math.max(0, (pcHp / firstDangerRound + thpAvg) / rawIncomingPerPc)
+        : Infinity;
+
+      if (Number.isFinite(targetMultForFirstDanger)) {
+        firstPcDangerMult = Math.min(firstPcDangerMult, targetMultForFirstDanger);
+      }
+      if (Number.isFinite(targetMultForWipe) && (tpkPressureMult == null || targetMultForWipe > tpkPressureMult)) {
+        tpkPressureMult = targetMultForWipe;
         toughestPcName = pc.Name || "?";
       }
 
+      const targetMultForPc = targetMultForWipe;
       pcRows.push({
         PC: pc.Name || "?",
         HP: pcHp,
@@ -2049,11 +2043,19 @@
         "Minion DPR": round2(pcMinionDpr * dprMult),
         "Scaled DPR/target": round2(totalDprPerPc),
         "Net DPR": round2(netDprPerPc),
-        "Target Mult": Number.isFinite(targetMultForPc) ? `${targetMultForPc.toFixed(2)}x` : "N/A",
+        "First Danger Mult": Number.isFinite(targetMultForFirstDanger) ? `${targetMultForFirstDanger.toFixed(2)}x` : "N/A",
+        "TPK Mult": Number.isFinite(targetMultForWipe) ? `${targetMultForWipe.toFixed(2)}x` : "N/A",
         "TTD (exact)": Number.isFinite(pcTtd) ? pcTtd.toFixed(1) : "∞",
         "TTD (rounds)": Number.isFinite(pcTtd) ? String(Math.ceil(pcTtd)) : "∞",
       });
     }
+
+    targetBossDprMult = Math.max(
+      Number.isFinite(firstPcDangerMult) ? firstPcDangerMult : 0,
+      Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0
+    );
+    if (targetBossDprMult <= 0) targetBossDprMult = null;
+    targetAttackDpr = targetBossDprMult == null ? 0 : round2(targetBossDprMult);
 
     return {
       targetRounds,
@@ -2285,7 +2287,7 @@
     if (r.firstDownRound != null) {
       const fd = Math.ceil(r.firstDownRound);
       setText(els.pacingFirstDown, String(fd));
-      applyMetricClass(els.pacingFirstDown, fd < r.targetRounds ? "danger" : fd > r.targetRounds * 1.5 ? "success" : "");
+      applyMetricClass(els.pacingFirstDown, fd > targetFirstPcDangerRound(r.targetRounds) ? "warning" : "success");
     } else {
       setText(els.pacingFirstDown, "∞");
       applyMetricClass(els.pacingFirstDown, "success");
@@ -2294,7 +2296,7 @@
     if (r.lastDownRound != null) {
       const ld = Math.ceil(r.lastDownRound);
       setText(els.pacingPartyWipe, String(ld));
-      applyMetricClass(els.pacingPartyWipe, ld < r.targetRounds ? "danger" : ld > r.targetRounds * 2 ? "success" : "warning");
+      applyMetricClass(els.pacingPartyWipe, ld < targetPartyWipeMinRound(r.targetRounds) ? "danger" : ld > targetPartyWipeMaxRound(r.targetRounds) ? "warning" : "success");
     } else {
       setText(els.pacingPartyWipe, "∞");
       applyMetricClass(els.pacingPartyWipe, "success");
@@ -2304,7 +2306,7 @@
     setText(els.pacingTargetDpr, `${bossDprMult.toFixed(2)}x`);
     const targetMultNote = Number.isFinite(r.targetBossDprMult) ? `pacing target: ${r.targetBossDprMult.toFixed(2)}x` : "pacing target: N/A";
     const dprHint = r.toughestPcName
-      ? `${targetMultNote} · ${r.toughestPcName} budget ${(r.targetRounds * 1.35).toFixed(1)}R`
+      ? `${targetMultNote} · ${r.toughestPcName} budget ${targetPartyWipeRound(r.targetRounds).toFixed(1)}R`
       : targetMultNote;
     setText(els.pacingTargetDprSub, dprHint);
 
@@ -2323,6 +2325,10 @@
     const recHp = r.recommendedBossHp;
     const partyWipe = r.lastDownRound;
     const firstDown = r.firstDownRound;
+    const firstDanger = targetFirstPcDangerRound(N);
+    const minWipe = targetPartyWipeMinRound(N);
+    const maxWipe = targetPartyWipeMaxRound(N);
+    const wipeWindow = formatRoundWindow(minWipe, maxWipe);
 
     let cls = "bal-ok";
     let badge = "";
@@ -2339,30 +2345,34 @@
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Cannot Kill Boss</span>`;
       analysis = "Party effective DPR on the boss is zero — check resistance factor, regen, and party DPR settings.";
-    } else if (partyWipe != null && partyWipe < N * 0.7) {
+    } else if (partyWipe != null && partyWipe < N) {
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Very Hard</span>`;
       analysis = `Party wipes at round ${fmt1(partyWipe)} — well before the target ${N} rounds. ` +
         `Reduce boss DPR toward ${fmtMult(r.targetBossDprMult)} or raise party sustain.`;
-    } else if (partyWipe != null && partyWipe < N) {
+    } else if (partyWipe != null && partyWipe < minWipe) {
       cls = "bal-warn";
       badge = `<span class="pacing-badge badge-warn">Hard</span>`;
-      analysis = `Party wipes at round ${fmt1(partyWipe)} — slightly before target. ` +
-        `Use boss DPR multiplier ${fmtMult(r.targetBossDprMult)} for ${r.toughestPcName} to last the full ${N} rounds.`;
-    } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > N * 2.5) {
+      analysis = `Party wipes at round ${fmt1(partyWipe)} — too soon after the boss death target. ` +
+        `Use boss DPR multiplier ${fmtMult(r.targetBossDprMult)} so full-party collapse lands by ${wipeWindow}.`;
+    } else if (firstDown == null || !Number.isFinite(firstDown) || firstDown > firstDanger) {
+      cls = "bal-easy";
+      badge = `<span class="pacing-badge badge-easy">Easy</span>`;
+      analysis = `No PC is down by round ${fmt1(firstDanger)}. Increase boss DPR to ${fmtMult(r.targetBossDprMult)} so at least one PC is near death or down by then.`;
+    } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > maxWipe + 1) {
       cls = "bal-easy";
       badge = `<span class="pacing-badge badge-easy">Very Easy</span>`;
-      analysis = `Boss dies in ${N} rounds and the party takes minimal casualties. ` +
+      analysis = `Boss dies in ${N} rounds, but the party survives far too long afterward. ` +
         `To add tension, increase boss DPR to ${fmtMult(r.targetBossDprMult)}.`;
-    } else if (partyWipe != null && partyWipe < N * 1.4) {
+    } else if (partyWipe != null && partyWipe <= maxWipe) {
       cls = "bal-ok";
       badge = `<span class="pacing-badge badge-ok">Balanced</span>`;
-      analysis = `Boss dies in ${N} rounds; party starts falling at round ${fmt1(firstDown)} and last PC at ${fmt1(partyWipe)}. ` +
+      analysis = `Boss dies in ${N} rounds; at least one PC is down by ${fmt1(firstDanger)} and full-party collapse is ${fmt1(partyWipe)}. ` +
         `Recommended boss HP: ${recHp} (current: ${Math.round(bossHp)}).`;
     } else {
       cls = "bal-easy";
       badge = `<span class="pacing-badge badge-easy">Easy</span>`;
-      analysis = `Party survives well past the target encounter length. Consider increasing boss DPR or HP. ` +
+      analysis = `Party survives past the intended ${wipeWindow} full-collapse point. ` +
         `Target boss DPR multiplier: ${fmtMult(r.targetBossDprMult)}.`;
     }
 
@@ -2376,8 +2386,9 @@
     const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
     const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
     const target = targetEncounterRounds();
+    const minRound = Math.min(BOSS_TUNE_MIN_ROUNDS, target);
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `<div class="pacing-advice"><strong>Tight pacing table rule:</strong> Until round ${target}, the boss can burn ${resources} Legendary Resistance/Action pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. After round ${target}, remove that protection and make the boss collapse: damage that reaches boss HP is modeled at ${antiSlog.toFixed(2)}x per late round.</div>`;
+    return `<div class="pacing-advice"><strong>Boss phase gate:</strong> The boss cannot drop before round ${minRound}. Until round ${target}, it can burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. At round ${target}, remove protection and collapse the boss once the party damages it; late damage is modeled at ${antiSlog.toFixed(2)}x.</div>`;
   }
 
   function tightPacingAdviceText() {
@@ -2385,8 +2396,9 @@
     const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
     const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
     const target = targetEncounterRounds();
+    const minRound = Math.min(BOSS_TUNE_MIN_ROUNDS, target);
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `\n\nTable rule required for these numbers:\n- Until round ${target}, the boss may burn ${resources} Legendary Resistance/Action pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- After round ${target}, remove that protection and make the boss collapse: damage that reaches boss HP is modeled at ${antiSlog.toFixed(2)}x per late round.\n- If you do not run those mechanics, expect a wider p10-p90 spread than the tool reports.`;
+    return `\n\nTable rule required for these numbers:\n- The boss cannot drop before round ${minRound}; hold it at 1 HP or transition phases if needed.\n- Until round ${target}, the boss may burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- At round ${target}, remove protection and collapse the boss once the party damages it; late damage is modeled at ${antiSlog.toFixed(2)}x.\n- Without these phase gates, raw dice variance can break the 7-10 round boss-fight window.`;
   }
 
   function fmt1(n) {
@@ -2395,6 +2407,13 @@
 
   function fmtMult(n) {
     return n == null || !Number.isFinite(n) ? "N/A" : `${n.toFixed(2)}x`;
+  }
+
+  function formatRoundWindow(minRound, maxRound) {
+    if (!Number.isFinite(minRound) || !Number.isFinite(maxRound)) return "N/A";
+    return Math.abs(minRound - maxRound) < 1e-9
+      ? `round ${fmt1(minRound)}`
+      : `rounds ${fmt1(minRound)}-${fmt1(maxRound)}`;
   }
 
   function setText(el, text) {
@@ -3778,6 +3797,26 @@
     const src = source && typeof source === "object" ? source : {};
     const fallback = safeInt(src.tune_target_median, DEFAULT_STATE.tune_target_median);
     return clamp(safeInt(src.pacing_rounds, fallback), MIN_TARGET_ROUNDS, MAX_TARGET_ROUNDS);
+  }
+
+  function bossTuneTargetRounds(source = state) {
+    return clamp(targetEncounterRounds(source), BOSS_TUNE_MIN_ROUNDS, BOSS_TUNE_MAX_ROUNDS);
+  }
+
+  function targetFirstPcDangerRound(targetRounds) {
+    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + FIRST_PC_DANGER_GRACE_ROUNDS;
+  }
+
+  function targetPartyWipeMinRound(targetRounds) {
+    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + TPK_GRACE_MIN_ROUNDS;
+  }
+
+  function targetPartyWipeMaxRound(targetRounds) {
+    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + TPK_GRACE_MAX_ROUNDS;
+  }
+
+  function targetPartyWipeRound(targetRounds) {
+    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + (TPK_GRACE_MIN_ROUNDS + TPK_GRACE_MAX_ROUNDS) / 2;
   }
 
   function round2(v) {
