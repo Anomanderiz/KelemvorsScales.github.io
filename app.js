@@ -169,7 +169,7 @@
 
   const LEGENDARY_COLUMNS = [
     { key: "Name", label: "Name", type: "text", parser: (v) => String(v).trim() },
-    { key: "Type", label: "Type", type: "select", options: ["attack", "save"], parser: (v) => (String(v).toLowerCase() === "save" ? "save" : "attack") },
+    { key: "Type", label: "Type", type: "select", options: ["attack", "save", "auto"], parser: (v) => normalizeLegendaryType(v) },
     { key: "Attack bonus", label: "Atk Bonus", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Crit", label: "Crit >=", type: "number", step: "1", min: "2", max: "20", parser: (v) => Math.max(2, Math.min(20, safeInt(v, 20))) },
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
@@ -1608,6 +1608,10 @@
 
         for (const action of legendary) {
           if (Math.random() >= 1 / spreadTargets) continue;
+          if (action.kind === "auto") {
+            roundDamage += rollDamageOne(action.damage_expr);
+            continue;
+          }
           if (action.kind === "save") {
             const bonus = saveBonuses[String(action.save_stat || "DEX").toUpperCase()] || 0;
             const roll = randomInt(1, 20);
@@ -3278,6 +3282,9 @@
   }
 
   function rollBossActionDamageForTarget(action, target, currentAc, currentMode, pcSaves, saveIndex) {
+    if ((action && action.kind) === "auto") {
+      return rollDamageOne(action.damage_expr);
+    }
     if ((action && action.kind) === "save") {
       const saveIdx = saveIndex[String(action.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
       const bonus = pcSaves[target][saveIdx];
@@ -3378,7 +3385,7 @@
     const saveStat = SAVE_KEYS.includes(saveStatRaw) ? saveStatRaw : "DEX";
     return {
       name: String(row.Name || "Legendary Action"),
-      kind: String(row.Type || "attack").toLowerCase() === "save" ? "save" : "attack",
+      kind: normalizeLegendaryType(row.Type),
       attack_bonus: safeInt(row["Attack bonus"], 0),
       dc: safeInt(row.DC, 0),
       save_stat: saveStat,
@@ -3416,6 +3423,9 @@
   }
 
   function expectedBossActionDamageVsPc(action, pcRow, mode) {
+    if ((action && action.kind) === "auto") {
+      return averageDamage(action.damage_expr);
+    }
     if ((action && action.kind) === "save") {
       return expectedSaveHalfDamage(action.dc, getSaveBonus(pcRow, action.save_stat), action.damage_expr);
     }
@@ -3614,6 +3624,13 @@
     const targetAvg = Math.max(0, avg * Math.max(0, safeFloat(multiplier, 1)));
     const preferredSides = dominantDieSides(expr) || 6;
     return damageFormulaForAverage(targetAvg, preferredSides);
+  }
+
+  function normalizeLegendaryType(value) {
+    const raw = String(value || "attack").toLowerCase();
+    if (raw === "save") return "save";
+    if (raw === "auto") return "auto";
+    return "attack";
   }
 
   function scaleDamageExpressionStatic(expr, multiplier) {
@@ -4140,7 +4157,7 @@
   function sanitizeLegendaryRow(row) {
     return {
       Name: String(row.Name || "Legendary Action").trim() || "Legendary Action",
-      Type: String(row.Type || "attack").toLowerCase() === "save" ? "save" : "attack",
+      Type: normalizeLegendaryType(row.Type),
       "Attack bonus": safeInt(row["Attack bonus"], 0),
       Crit: Math.max(2, Math.min(20, safeInt(row.Crit, 20))),
       DC: safeInt(row.DC, 0),
