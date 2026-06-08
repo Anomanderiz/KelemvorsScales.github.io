@@ -1438,9 +1438,14 @@
     const medianDistance = (median, tgtRound) => Number.isFinite(median) ? Math.abs(median - tgtRound) : 999;
     const hpScore = (result, tgtRound) => {
       if (!result) return Infinity;
-      return medianDistance(result.median, tgtRound)
-        + Math.abs(result.killByTarget - 0.5) * 0.35
-        + Math.max(0, result.tpk - tpkCap) * 100;
+      const distance = medianDistance(result.median, tgtRound);
+      const earlyMiss = Number.isFinite(result.median) ? Math.max(0, tgtRound - result.median) : 0;
+      const lateMiss = Number.isFinite(result.median) ? Math.max(0, result.median - tgtRound) : 20;
+      return distance * 100
+        + earlyMiss * earlyMiss * 20
+        + lateMiss * lateMiss * 4
+        + Math.abs(result.killByTarget - 0.5) * 2
+        + Math.max(0, result.tpk - tpkCap) * 2;
     };
 
     const tuneHpForMult = async (mult, tgtRound, trials) => {
@@ -1491,7 +1496,8 @@
         : 80;
       const graceWipePenalty = Math.abs(result.wipeByGrace - 0.5) * 45 + Math.max(0, 0.35 - result.wipeByGrace) * 90;
       const tpkPenalty = result.tpk > tpkCap ? (result.tpk - tpkCap) * 1200 : 0;
-      const medianPenalty = medianDistance(result.median, tgtRound) * 25;
+      const earlyMedianMiss = Number.isFinite(result.median) ? Math.max(0, tgtRound - result.median) : 0;
+      const medianPenalty = medianDistance(result.median, tgtRound) * 120 + earlyMedianMiss * earlyMedianMiss * 35;
       const bandPenalty = Number.isFinite(result.band) ? Math.max(0, result.band - bandTarget) * 0.4 : 10;
       return medianPenalty + wipePenalty + graceWipePenalty + tpkPenalty + bandPenalty;
     };
@@ -1557,6 +1563,18 @@
     while (final && final.tpk > tpkCap && final.mult > 0.01 && safetyPasses < 4) {
       final = await tuneAtPressure(final.mult * 0.85, targetRound, Math.max(3000, Math.floor(originalTrials * 0.5))) || final;
       safetyPasses += 1;
+    }
+    const finalDistance = final ? medianDistance(final.median, targetRound) : Infinity;
+    const finalTolerance = Math.max(1.25, targetRound * 0.15);
+    if (!final || !Number.isFinite(final.median) || final.median < targetRound - finalTolerance || finalDistance > finalTolerance) {
+      alert(
+        `Auto-tune could not find a reliable ${targetRound}R solution without violating other constraints.\n\n` +
+        `Best candidate: median ${final && Number.isFinite(final.median) ? final.median.toFixed(1) : "inf"}R, ` +
+        `HP ${final ? final.hp : "N/A"}, DPR ${final ? final.mult.toFixed(2) : "N/A"}x.\n\n` +
+        `Try lowering the target rounds, raising the TPK cap, lowering boss damage, or widening max band width.`
+      );
+      setStatus("Auto-tune failed: no reliable target-round solution.", 5000);
+      return;
     }
 
     const tunedHp = Math.max(1, Math.round(final.hp));
