@@ -12,6 +12,10 @@
   const FIRST_PC_DANGER_GRACE_ROUNDS = 1;
   const TPK_GRACE_MIN_ROUNDS = 3;
   const TPK_GRACE_MAX_ROUNDS = 4;
+  const BOSS_TUNE_TPK_PREFERRED = 0.06;
+  const BOSS_TUNE_TPK_ACCEPTABLE = 0.10;
+  const REPLENISHING_MINION_ABSORB_FRACTION = 0.65;
+  const STATIC_MINION_PHASE_FRACTION = 0.20;
 
   const DEFAULT_STATE = {
     party_table: [
@@ -1370,7 +1374,6 @@
     const originalMult = bossDprMultiplier(state);
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
     const targetRound = bossTuneTargetRounds();
-    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const changes = [];
     const runner = createEncounterWorkerRunner();
@@ -1378,23 +1381,14 @@
     try {
       state.pacing_rounds = targetRound;
       state.tune_target_median = targetRound;
-      let pacingResult = computePacingResult();
-      const minionCount = Math.max(0, safeInt(state.minion_count, 0));
-      if (minionCount > 0 && Boolean(state.minion_replenish)) {
-        const mph = pacingResult.minionPhaseInfo;
-        if (!mph || mph.partyDprVsMinions <= 0) {
-          alert(`Impossible encounter: party expected DPR against minion AC ${state.minion_ac} is 0.\nReduce minion AC, remove replenish, or add party accuracy/damage.`);
-          setStatus("Auto-tune aborted: minions are unkillable.", 4000);
-          return;
-        }
-
-        const newHp = Math.max(1, Math.floor((mph.partyDprVsMinions * 0.8) / minionCount));
-        if (newHp < Math.round(state.minion_hp)) {
-          changes.push(`Minion HP: ${Math.round(state.minion_hp)} -> ${newHp}`);
-          state.minion_hp = newHp;
-          pacingResult = computePacingResult();
-        }
+      const minionTune = tuneMinionsForBossMode(targetRound);
+      if (minionTune.error) {
+        alert(minionTune.error);
+        setStatus("Auto-tune aborted: minions cannot be paced.", 4200);
+        return;
       }
+      changes.push(...minionTune.changes);
+      let pacingResult = computePacingResult();
 
       if (!Number.isFinite(pacingResult.recommendedBossHp) || pacingResult.recommendedBossHp <= 0) {
         alert("Auto-tune could not find a boss HP target. Check party DPR, boss resistance/regen, and replenishing minions.");
@@ -1447,14 +1441,12 @@
       const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
       const finalProjectedWipe = projectedPartyWipeRound(state.boss_dpr_mult, targetRound);
       const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at pacing targets";
-      const tpkLine = finalTpk <= tpkCap
-        ? `TPK ${(100 * finalTpk).toFixed(1)}% <= cap ${(100 * tpkCap).toFixed(1)}%`
-        : `TPK ${(100 * finalTpk).toFixed(1)}% exceeds cap ${(100 * tpkCap).toFixed(1)}%; lower boss damage or accept higher cap`;
+      const tpkLine = bossModeTpkLine(finalTpk);
       const bandLine = finalBand > bandTarget + 0.5
         ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; damage variance is too high for tighter pacing without changing mechanics.`
         : "";
-      const tpkAdvice = finalTpk > tpkCap
-        ? `\n\nTPK exceeds the configured cap, but Tune Everything preserved boss-fight pressure: lowering DPR would make the party survive too long. Reduce damage variance, add healing/resources, or accept a higher cap.`
+      const tpkAdvice = finalTpk > BOSS_TUNE_TPK_ACCEPTABLE
+        ? `\n\nTPK exceeds the boss-mode acceptable band. Tune Everything preserved pressure; reduce damage variance, add baseline sustain, or soften minion damage rather than using the manual TPK input.`
         : "";
 
       alert(
@@ -2316,10 +2308,10 @@
     state.minion_atk_avg = round2(Math.max(0, safeFloat(state.minion_atk_avg, 0) * mult));
     state.minion_save_avg = round2(Math.max(0, safeFloat(state.minion_save_avg, 0) * mult));
     if (state.minion_atk_enabled && Math.abs(state.minion_atk_avg - oldMinionAtk) > 0.005) {
-      changes.push(`Minion attack avg: ${oldMinionAtk} -> ${state.minion_atk_avg}`);
+      changes.push(`Minion attack avg: ${oldMinionAtk} -> ${state.minion_atk_avg} (${damageFormulaForAverageStatic(state.minion_atk_avg, 6)})`);
     }
     if (state.minion_save_enabled && Math.abs(state.minion_save_avg - oldMinionSave) > 0.005) {
-      changes.push(`Minion save avg: ${oldMinionSave} -> ${state.minion_save_avg}`);
+      changes.push(`Minion save avg: ${oldMinionSave} -> ${state.minion_save_avg} (${damageFormulaForAverageStatic(state.minion_save_avg, 6)})`);
     }
 
     state.boss_dpr_mult = 1;
@@ -2328,6 +2320,59 @@
       ? "Converted damage to one-die static formulas"
       : `Baked ${mult.toFixed(2)}x DPR into one-die static formulas`;
     return [header, ...changes];
+  }
+
+  function tuneMinionsForBossMode(targetRound) {
+    const changes = [];
+    const count = Math.max(0, safeInt(state.minion_count, 0));
+    if (count <= 0) return { changes };
+
+    const useNova = Boolean(state.enc_use_nova);
+    const partyDprVsMinions = expectedPartyDprVsEnemy(useNova, state.minion_ac);
+    if (!Number.isFinite(partyDprVsMinions) || partyDprVsMinions <= 0) {
+      return {
+        changes,
+        error: `Impossible minion setup: party expected DPR against minion AC ${state.minion_ac} is 0. Reduce minion AC, remove minions, or add party accuracy/damage.`,
+      };
+    }
+
+    const oldHp = round2(state.minion_hp);
+    let targetPool;
+    let reason;
+    if (Boolean(state.minion_replenish)) {
+      targetPool = partyDprVsMinions * REPLENISHING_MINION_ABSORB_FRACTION;
+      reason = "replenishing pack remains one-round-clearable";
+    } else {
+      const phaseRounds = clamp(Math.round(safeFloat(targetRound, BOSS_TUNE_MAX_ROUNDS) * STATIC_MINION_PHASE_FRACTION), 1, 2);
+      targetPool = partyDprVsMinions * phaseRounds;
+      reason = `${phaseRounds}R static minion phase`;
+    }
+
+    const newHp = Math.max(1, Math.round(targetPool / count));
+    if (Boolean(state.minion_replenish) && newHp * count >= partyDprVsMinions) {
+      return {
+        changes,
+        error: `Too many replenishing minions: ${count} minions at minimum 1 HP cannot be reliably cleared each round by ${partyDprVsMinions.toFixed(1)} expected DPR. Reduce minion count or disable replenish.`,
+      };
+    }
+
+    if (Math.abs(newHp - oldHp) > 0.005) {
+      state.minion_hp = newHp;
+      changes.push(`Minion HP: ${oldHp} -> ${newHp} (${reason})`);
+    }
+
+    return { changes };
+  }
+
+  function bossModeTpkLine(tpk) {
+    const pct = (100 * clamp(safeFloat(tpk, 0), 0, 1)).toFixed(1);
+    if (tpk <= BOSS_TUNE_TPK_PREFERRED) {
+      return `TPK ${pct}%: preferred boss-mode band (<${(100 * BOSS_TUNE_TPK_PREFERRED).toFixed(0)}%)`;
+    }
+    if (tpk <= BOSS_TUNE_TPK_ACCEPTABLE) {
+      return `TPK ${pct}%: acceptable boss-mode band (<${(100 * BOSS_TUNE_TPK_ACCEPTABLE).toFixed(0)}%)`;
+    }
+    return `TPK ${pct}%: exceeds boss-mode acceptable band (<${(100 * BOSS_TUNE_TPK_ACCEPTABLE).toFixed(0)}%)`;
   }
 
   function renderPacingResult(r) {
