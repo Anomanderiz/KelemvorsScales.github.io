@@ -1422,9 +1422,13 @@
       state.tight_cap_pct = round2(1 / BOSS_TUNE_MIN_ROUNDS);
       state.tight_cap_resources = 6;
       state.tight_anti_slog_mult = 2.0;
+      const bakedDamageChanges = bakeTunedDamageIntoStatBlock();
+      changes.push(...bakedDamageChanges);
       state = normalizeState(state);
       syncControlsFromState();
       persistState();
+      renderAttackSection();
+      renderPhaseSection();
       refreshEffTableFromMode();
       refreshReport();
 
@@ -2279,6 +2283,53 @@
     setStatus(`Baked ${mult.toFixed(2)}x DPR into boss kit formulas and reset multiplier to 1x.`, 3500);
   }
 
+  function bakeTunedDamageIntoStatBlock() {
+    const mult = Number.isFinite(bossDprMultiplier(state)) ? bossDprMultiplier(state) : 1;
+
+    const changes = [];
+    state.attacks_table = state.attacks_table.map((row) => {
+      const oldDamage = String(row.Damage || "0");
+      const nextDamage = scaleDamageExpressionStatic(oldDamage, mult);
+      if (nextDamage !== oldDamage) changes.push(`${row.Name || "Attack"} damage: ${oldDamage} -> ${nextDamage}`);
+      return sanitizeAttackRow({ ...row, Damage: nextDamage });
+    });
+
+    state.phase_table = state.phase_table.map((row) => {
+      const oldDamage = String(row.Damage || "0");
+      const nextDamage = scaleDamageExpressionStatic(oldDamage, mult);
+      if (nextDamage !== oldDamage) changes.push(`${row.Name || "Round mechanic"} damage: ${oldDamage} -> ${nextDamage}`);
+      return sanitizePhaseRow({ ...row, Damage: nextDamage });
+    });
+
+    const oldLair = String(state.lair_formula || damageFormulaForAverage(state.lair_avg, 6));
+    state.lair_avg = round2(Math.max(0, safeFloat(state.lair_avg, 0) * mult));
+    state.lair_formula = damageFormulaForAverageStatic(state.lair_avg, dominantDieSides(oldLair) || 6);
+    if (state.lair_enabled && state.lair_formula !== oldLair) changes.push(`Lair damage: ${oldLair} -> ${state.lair_formula}`);
+
+    const oldRecharge = String(state.rech_formula || damageFormulaForAverage(state.rech_avg, 6));
+    state.rech_avg = round2(Math.max(0, safeFloat(state.rech_avg, 0) * mult));
+    state.rech_formula = damageFormulaForAverageStatic(state.rech_avg, dominantDieSides(oldRecharge) || 6);
+    if (state.rech_enabled && state.rech_formula !== oldRecharge) changes.push(`Recharge damage: ${oldRecharge} -> ${state.rech_formula}`);
+
+    const oldMinionAtk = round2(state.minion_atk_avg);
+    const oldMinionSave = round2(state.minion_save_avg);
+    state.minion_atk_avg = round2(Math.max(0, safeFloat(state.minion_atk_avg, 0) * mult));
+    state.minion_save_avg = round2(Math.max(0, safeFloat(state.minion_save_avg, 0) * mult));
+    if (state.minion_atk_enabled && Math.abs(state.minion_atk_avg - oldMinionAtk) > 0.005) {
+      changes.push(`Minion attack avg: ${oldMinionAtk} -> ${state.minion_atk_avg}`);
+    }
+    if (state.minion_save_enabled && Math.abs(state.minion_save_avg - oldMinionSave) > 0.005) {
+      changes.push(`Minion save avg: ${oldMinionSave} -> ${state.minion_save_avg}`);
+    }
+
+    state.boss_dpr_mult = 1;
+    if (!changes.length) return [];
+    const header = Math.abs(mult - 1) < 0.005
+      ? "Converted damage to one-die static formulas"
+      : `Baked ${mult.toFixed(2)}x DPR into one-die static formulas`;
+    return [header, ...changes];
+  }
+
   function renderPacingResult(r) {
     // Metric values
     setText(els.pacingBossHp, String(Math.round(r.currentBossHp)));
@@ -2488,7 +2539,7 @@
       const roll = randomInt(1, 20);
       const hit = roll === 20 || (roll !== 1 && roll + atkBonus >= ac);
       if (hit) {
-        raw += Math.max(0, safeFloat(opts.minion_atk_avg, 5));
+        raw += rollStaticAverageDamage(opts.minion_atk_avg, 6);
       }
     }
 
@@ -2500,7 +2551,8 @@
       const roll = randomInt(1, 20);
       const success = roll === 20 || (roll !== 1 && roll + bonus >= dc);
       const avg = Math.max(0, safeFloat(opts.minion_save_avg, 7));
-      raw += success ? 0.5 * avg : avg;
+      const dmg = rollStaticAverageDamage(avg, 6);
+      raw += success ? 0.5 * dmg : dmg;
     }
 
     return raw;
@@ -3211,6 +3263,13 @@
     return damageFormulaForAverage(targetAvg, preferredSides);
   }
 
+  function scaleDamageExpressionStatic(expr, multiplier) {
+    const avg = averageDamage(expr);
+    const targetAvg = Math.max(0, avg * Math.max(0, safeFloat(multiplier, 1)));
+    const preferredSides = dominantDieSides(expr) || 6;
+    return damageFormulaForAverageStatic(targetAvg, preferredSides);
+  }
+
   function dominantDieSides(expr) {
     const parsed = parseDamageExpression(expr);
     if (!parsed.dice.length) return 6;
@@ -3260,6 +3319,36 @@
     if (!best) return String(Math.max(0, Math.round(avg)));
     const dice = `${best.count}d${best.sides}`;
     return best.mod > 0 ? `${dice}+${best.mod}` : dice;
+  }
+
+  function damageFormulaForAverageStatic(targetAvg, preferredSides = 6) {
+    const avg = Math.max(0, safeFloat(targetAvg, 0));
+    if (avg <= 0.05) return "0";
+
+    const sideCandidates = uniqueNumbers([preferredSides, 6, 8, 10, 12, 4, 3, 2, 20])
+      .filter((n) => n >= 2 && n <= 20);
+    let best = null;
+    for (const sides of sideCandidates) {
+      const dieAvg = (sides + 1) / 2;
+      const mod = Math.max(-1, Math.round(avg - dieAvg));
+      const candidateAvg = dieAvg + mod;
+      const err = Math.abs(candidateAvg - avg);
+      const sidePenalty = sides === preferredSides ? 0 : 0.05;
+      const score = err + sidePenalty;
+      if (!best || score < best.score) {
+        best = { sides, mod, score };
+      }
+    }
+
+    if (!best) return "1d6";
+    const dice = `1d${best.sides}`;
+    if (best.mod > 0) return `${dice}+${best.mod}`;
+    if (best.mod < 0) return `${dice}${best.mod}`;
+    return dice;
+  }
+
+  function rollStaticAverageDamage(targetAvg, preferredSides = 6) {
+    return rollDamageOne(damageFormulaForAverageStatic(targetAvg, preferredSides));
   }
 
   function uniqueNumbers(values) {
