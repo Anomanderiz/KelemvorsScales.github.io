@@ -12,8 +12,6 @@
   const FIRST_PC_DANGER_GRACE_ROUNDS = 1;
   const TPK_GRACE_MIN_ROUNDS = 2;
   const TPK_GRACE_MAX_ROUNDS = 3;
-  const BOSS_TUNE_TPK_PREFERRED = 0.06;
-  const BOSS_TUNE_TPK_ACCEPTABLE = 0.10;
   const REPLENISHING_MINION_ABSORB_FRACTION = 0.65;
   const STATIC_MINION_PHASE_FRACTION = 0.20;
 
@@ -25,14 +23,14 @@
       { Name: "Wizard",  AC: 13, HP: 32, STR: 0, DEX: 3, CON: 2, INT: 5, WIS: 2, CHA: 1 },
     ],
     attacks_table: [
-      { Name: "Bite",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d10+5", "Uses/round": 1, "Melee?": true,  "Enabled?": true },
-      { Name: "Claw",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d6+5",  "Uses/round": 2, "Melee?": true,  "Enabled?": true },
-      { Name: "Fire Breath", Type: "save",   "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6",    "Uses/round": 1, "Melee?": false, "Enabled?": true },
+      { Name: "Bite",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d10+5", Targets: 1, "Uses/round": 1, "Melee?": true,  "Enabled?": true },
+      { Name: "Claw",        Type: "attack", "Attack bonus": 7, DC: 0,  Save: "DEX", Damage: "2d6+5",  Targets: 1, "Uses/round": 2, "Melee?": true,  "Enabled?": true },
+      { Name: "Fire Breath", Type: "save",   "Attack bonus": 0, DC: 15, Save: "DEX", Damage: "8d6",    Targets: 1, "Uses/round": 1, "Melee?": false, "Enabled?": true },
     ],
     legendary_action_budget: 3,
     legendary_actions_table: [
-      { Name: "Tail Swipe", Type: "attack", "Attack bonus": 7, Crit: 20, DC: 0, Save: "DEX", Damage: "1d8+5", Cost: 1, "Uses/round": 1, "Enabled?": false },
-      { Name: "Wing Burst", Type: "save", "Attack bonus": 0, Crit: 20, DC: 15, Save: "DEX", Damage: "2d6+3", Cost: 2, "Uses/round": 1, "Enabled?": false },
+      { Name: "Tail Swipe", Type: "attack", "Attack bonus": 7, Crit: 20, DC: 0, Save: "DEX", Damage: "1d8+5", Targets: 1, Cost: 1, "Uses/round": 1, "Enabled?": false },
+      { Name: "Wing Burst", Type: "save", "Attack bonus": 0, Crit: 20, DC: 15, Save: "DEX", Damage: "2d6+3", Targets: 1, Cost: 2, "Uses/round": 1, "Enabled?": false },
     ],
     party_dpr_table: [
       { Member: "Fighter", Damage: "1d8+5" },
@@ -48,7 +46,6 @@
     ],
 
     mode_select: "normal",
-    spread_targets: 1,
     thp_expr: "0",
     party_healing_per_round: 0,
 
@@ -85,12 +82,12 @@
     dpr_cv: 0.6,
     initiative_mode: "random",
 
-    tune_target_median: 5.0,
+    tune_target_median: 10.0,
     tune_tpk_cap: 0.05,
     tune_kill_rate: 0.75,
     tune_band_max: 3.0,
 
-    pacing_rounds: 5,
+    pacing_rounds: 10,
     tight_pacing_enabled: true,
     tight_cap_pct: 0.24,
     tight_cap_resources: 3,
@@ -109,6 +106,7 @@
     minion_save_stat: "DEX",
     minion_save_dc: 13,
     minion_save_avg: 7,
+    minion_save_targets: 1,
   };
 
   const PARTY_COLUMNS = [
@@ -162,6 +160,7 @@
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
+    { key: "Targets", label: "Save Targets", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Uses/round", label: "Uses/round", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 1)) },
     { key: "Uses/encounter", label: "Uses/enc", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 0)) },
     { key: "Melee?", label: "Melee?", type: "checkbox", parser: (v) => Boolean(v) },
@@ -176,6 +175,7 @@
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
+    { key: "Targets", label: "Save Targets", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Cost", label: "Cost", type: "number", step: "1", min: "1", max: "4", parser: (v) => clamp(safeInt(v, 1), 1, 4) },
     { key: "Uses/round", label: "Use/R", type: "number", step: "1", min: "0", max: "1", parser: (v) => clamp(safeInt(v, 1), 0, 1) },
     { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
@@ -261,7 +261,7 @@
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
       "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable", "optLegendaryBudget", "btnAddLegendaryAction", "legendaryTable", "btnAddPhaseMechanic", "phaseTable",
-      "optModeSelect", "optSpreadTargets", "optThpExpr", "optPartyHealingPerRound", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
+      "optModeSelect", "optThpExpr", "optPartyHealingPerRound", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
       "optLairEnabled", "optLairAvg", "optLairFormula", "optLairTargets", "optLairEveryN",
       "optRechEnabled", "optRechargeText", "optRechAvg", "optRechFormula", "optRechTargets",
       "optRiderMode", "optRiderDuration", "optRiderMeleeOnly",
@@ -281,7 +281,7 @@
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
       "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish",
       "optMinionAtkEnabled", "optMinionAtkBonus", "optMinionAtkAvg",
-      "optMinionSaveEnabled", "optMinionSaveStat", "optMinionSaveDc", "optMinionSaveAvg",
+      "optMinionSaveEnabled", "optMinionSaveStat", "optMinionSaveDc", "optMinionSaveAvg", "optMinionSaveTargets",
       "minionTtdCard", "minionTtdTable",
     ];
 
@@ -363,6 +363,7 @@
         DC: 0,
         Save: "DEX",
         Damage: "1d6+3",
+        Targets: 1,
         "Uses/round": 1,
         "Uses/encounter": 0,
         "Melee?": true,
@@ -382,6 +383,7 @@
         DC: 15,
         Save: "DEX",
         Damage: "4d8",
+        Targets: 1,
         "Uses/round": 1,
         "Uses/encounter": 1,
         "Melee?": false,
@@ -402,6 +404,7 @@
         DC: 0,
         Save: "DEX",
         Damage: "1d8+4",
+        Targets: 1,
         Cost: 1,
         "Uses/round": 1,
         "Enabled?": true,
@@ -463,7 +466,6 @@
 
   function bindOptionControls() {
     bindControl("optModeSelect", "mode_select", (el) => String(el.value || "normal"));
-    bindControl("optSpreadTargets", "spread_targets", (el) => Math.max(1, safeInt(el.value, 1)));
     bindControl("optThpExpr", "thp_expr", (el) => String(el.value || "0").trim() || "0");
     bindControl("optPartyHealingPerRound", "party_healing_per_round", (el) => Math.max(0, safeFloat(el.value, 0)));
 
@@ -549,6 +551,7 @@
     bindControl("optMinionSaveStat",    "minion_save_stat",   (el) => String(el.value || "DEX"),             { refreshEff: true });
     bindControl("optMinionSaveDc",      "minion_save_dc",     (el) => clamp(safeInt(el.value, 13), 1, 30),  { refreshEff: true });
     bindControl("optMinionSaveAvg",     "minion_save_avg",    (el) => Math.max(0, safeFloat(el.value, 7)),  { refreshEff: true });
+    bindControl("optMinionSaveTargets", "minion_save_targets",(el) => Math.max(1, safeInt(el.value, 1)),     { refreshEff: true });
   }
 
   function runButtonAction(button, action, failureMessage) {
@@ -612,7 +615,6 @@
 
   function syncControlsFromState() {
     setControlValue(els.optModeSelect, state.mode_select);
-    setControlValue(els.optSpreadTargets, state.spread_targets);
     setControlValue(els.optThpExpr, state.thp_expr);
     setControlValue(els.optPartyHealingPerRound, state.party_healing_per_round);
 
@@ -667,6 +669,7 @@
     if (els.optMinionSaveStat) els.optMinionSaveStat.value = state.minion_save_stat || "DEX";
     setControlValue(els.optMinionSaveDc,   state.minion_save_dc);
     setControlValue(els.optMinionSaveAvg,  state.minion_save_avg);
+    setControlValue(els.optMinionSaveTargets, state.minion_save_targets);
   }
 
   function renderPartySection() {
@@ -981,7 +984,7 @@
     const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(state, party.length);
-    const spread = Math.max(1, safeInt(state.spread_targets, 1));
+    const partySize = Math.max(1, party.length);
     const horizonRounds = Math.max(1, safeInt(state.pacing_rounds || state.enc_max_rounds, 1));
 
     const rows = [];
@@ -989,11 +992,10 @@
     const chartValues = [];
 
     for (const pc of party) {
-      const baseDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, horizonRounds);
-      const legendaryDpr = legendaryActionsPerTargetDpr(pc, state.mode_select || "normal", legendary, state.legendary_action_budget);
+      const recurring = recurringBossDprPerPc(pc, attacks, legendary, horizonRounds, partySize, state);
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, horizonRounds);
-      const minionDpr = minionDprVsPc(pc);
-      const total = ((baseDpr + legendaryDpr) / spread + lairRechDpr + minionDpr + phaseDpr) * dprMult;
+      const minionDpr = minionDprVsPc(pc, horizonRounds, Boolean(state.enc_use_nova));
+      const total = (recurring.attackDpr + recurring.legendaryDpr + lairRechDpr + minionDpr + phaseDpr) * dprMult;
       const net = Math.max(0, total - thpAvg - healingPerPc);
       const hp = Math.max(1, safeInt(pc.HP, 1));
       const exact = net > 0 ? hp / net : Number.POSITIVE_INFINITY;
@@ -1003,8 +1005,8 @@
         Name: pc.Name || "?",
         AC: safeInt(pc.AC, 10),
         HP: hp,
-        "DPR (attacks)": round2(baseDpr / spread),
-        "DPR (legendary)": round2(legendaryDpr / spread),
+        "DPR (attacks)": round2(recurring.attackDpr),
+        "DPR (legendary)": round2(recurring.legendaryDpr),
         "DPR (mechanics)": round2(phaseDpr),
         "DPR (total)": round2(total),
         "Healing / round": round2(healingPerPc),
@@ -1144,7 +1146,7 @@
       data: {
         labels: metrics.times,
         datasets: [{
-          label: "S(t): Boss alive (kills only)",
+          label: "S(t): Boss not defeated",
           data: metrics.survivalCurve,
           stepped: "before",
           borderColor: "rgba(191,26,47,1)",
@@ -1156,7 +1158,7 @@
         }],
       },
       options: baseChartOptions({
-        plugins: { title: { display: true, text: "Boss Survival Curve (kills only)" } },
+        plugins: { title: { display: true, text: "Boss Survival Curve (all trials)" } },
         scales: {
           y: {
             min: 0, max: 1,
@@ -1445,7 +1447,10 @@
     const originalMult = bossDprMultiplier(state);
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
     const targetRound = bossTuneTargetRounds();
+    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
+    const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
+    const quickTrials = clamp(Math.round(originalTrials * 0.3), 1500, 4000);
     const changes = [];
     const runner = createEncounterWorkerRunner();
 
@@ -1474,23 +1479,79 @@
         ? round2(clamp(pacingResult.targetBossDprMult, 0, 20))
         : round2(clamp(originalMult, 0, 20));
       let tunedHp = pacingHp;
-      const tunedMult = pacingMult;
-
-      if (tunedHp !== originalHp) changes.push(`Boss HP: ${originalHp} -> ${tunedHp}`);
-      if (Math.abs(tunedMult - originalMult) > 0.01) changes.push(`Boss DPR mult: ${originalMult.toFixed(2)}x -> ${tunedMult.toFixed(2)}x`);
+      let residualMult = 1;
 
       state.pacing_rounds = targetRound;
       state.tune_target_median = targetRound;
       state.boss_hp = tunedHp;
-      state.boss_dpr_mult = tunedMult;
+      state.boss_dpr_mult = pacingMult;
       state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), targetRound + 3);
       state.enc_trials = originalTrials;
       state.tight_pacing_enabled = true;
       state.tight_cap_pct = round2(1 / BOSS_TUNE_MIN_ROUNDS);
       state.tight_cap_resources = 6;
       state.tight_anti_slog_mult = 2.0;
-      const bakedDamageChanges = bakeTunedDamageIntoStatBlock();
-      changes.push(...bakedDamageChanges);
+
+      if (Math.abs(pacingMult - originalMult) > 0.01) {
+        changes.push(`Boss DPR pacing scale: ${originalMult.toFixed(2)}x -> ${pacingMult.toFixed(2)}x`);
+      }
+      // Convert to the deliberately low-variance final formulas before Monte
+      // Carlo tuning so the search validates the stat block it will keep.
+      changes.push(...bakeTunedDamageIntoStatBlock());
+
+      const evaluate = async (hp, mult) => {
+        const metrics = await runner.run({
+          boss_hp: Math.max(1, Math.round(hp)),
+          boss_dpr_mult: clamp(mult, 0, 20),
+          enc_trials: quickTrials,
+        });
+        if (!metrics || metrics.error) return null;
+        const killByTarget = metrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, metrics.ttk.length);
+        return { tpk: metrics.tpkProb, killByTarget };
+      };
+
+      // First retain as much deterministic pressure as possible while honoring
+      // the configured TPK cap at the pacing HP target.
+      let pressureCheck = await evaluate(tunedHp, residualMult);
+      if (pressureCheck && pressureCheck.tpk > tpkCap + 0.002) {
+        let lo = 0;
+        let hi = 1;
+        for (let i = 0; i < 11; i += 1) {
+          const mid = (lo + hi) / 2;
+          const result = await evaluate(tunedHp, mid);
+          if (result && result.tpk <= tpkCap) lo = mid;
+          else hi = mid;
+        }
+        residualMult = round2(lo);
+      }
+
+      // Then choose the highest HP that still meets both the requested kill
+      // rate by the target round and the TPK cap.
+      const feasibleHp = async (hp) => {
+        const result = await evaluate(hp, residualMult);
+        return result && result.killByTarget >= killRateTarget && result.tpk <= tpkCap + 0.005;
+      };
+      let hpLo = 1;
+      let hpHi = Math.max(2, pacingHp * 2);
+      while (await feasibleHp(hpHi)) {
+        hpLo = hpHi;
+        hpHi *= 2;
+        if (hpHi > Math.max(1000000, pacingHp * 32)) break;
+      }
+      for (let i = 0; i < 12 && hpHi - hpLo > 1; i += 1) {
+        const mid = Math.floor((hpLo + hpHi + 1) / 2);
+        if (await feasibleHp(mid)) hpLo = mid;
+        else hpHi = mid - 1;
+      }
+      tunedHp = Math.max(1, Math.round(hpLo));
+      state.boss_hp = tunedHp;
+      state.boss_dpr_mult = residualMult;
+
+      if (tunedHp !== originalHp) changes.push(`Boss HP: ${originalHp} -> ${tunedHp} (kill-rate/TPK constraints)`);
+      if (residualMult < 0.995) {
+        changes.push(`Post-conversion pressure: 1.00x -> ${residualMult.toFixed(2)}x (TPK cap)`);
+        changes.push(...bakeTunedDamageIntoStatBlock());
+      }
       state = normalizeState(state);
       syncControlsFromState();
       persistState();
@@ -1507,7 +1568,7 @@
       }
 
       const finiteTtk = finalMetrics.ttk.filter((v) => Number.isFinite(v));
-      const finalMed = percentile(finalMetrics.ttk, 50);
+      const finalMed = finiteTtk.length ? percentile(finiteTtk, 50) : Infinity;
       const finalP10 = finiteTtk.length ? percentile(finiteTtk, 10) : Infinity;
       const finalP90 = finiteTtk.length ? percentile(finiteTtk, 90) : Infinity;
       const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
@@ -1515,12 +1576,12 @@
       const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
       const finalProjectedWipe = projectedPartyWipeRound(state.boss_dpr_mult, targetRound);
       const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at pacing targets";
-      const tpkLine = bossModeTpkLine(finalTpk);
+      const tpkLine = `TPK ${(100 * finalTpk).toFixed(1)}% (cap ${(100 * tpkCap).toFixed(1)}%)`;
       const bandLine = finalBand > bandTarget + 0.5
         ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; damage variance is too high for tighter pacing without changing mechanics.`
         : "";
-      const tpkAdvice = finalTpk > BOSS_TUNE_TPK_ACCEPTABLE
-        ? `\n\nTPK exceeds the boss-mode acceptable band. Tune Everything preserved pressure; reduce damage variance, add baseline sustain, or soften minion damage rather than using the manual TPK input.`
+      const tpkAdvice = finalTpk > tpkCap + 0.005
+        ? `\n\nFinal TPK exceeds the configured cap after formula rounding; rerun tuning or soften burst/minion damage.`
         : "";
 
       alert(
@@ -1553,7 +1614,7 @@
     }
     const thpAvg = Math.max(0, averageDamage(opts.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(opts, activePartySize(opts));
-    const spreadTargets = Math.max(1, safeInt(opts.spread_targets, 1));
+    const partySize = activePartySize(opts);
     const dprMult = bossDprMultiplier(opts);
 
     const totalDamage = new Array(trials).fill(0);
@@ -1582,12 +1643,15 @@
           const availableUses = Math.min(atk.uses_per_round, attackUsesRemaining[i][a]);
           for (let use = 0; use < availableUses; use += 1) {
             attackUsesRemaining[i][a] -= 1;
-            if (Math.random() >= 1 / spreadTargets) continue;
+            const targetChance = atk.kind === "save"
+              ? Math.min(1, Math.max(1, safeInt(atk.targets, 1)) / partySize)
+              : 1 / partySize;
+            if (Math.random() >= targetChance) continue;
 
             if (atk.kind === "save") {
               const bonus = saveBonuses[String(atk.save_stat || "DEX").toUpperCase()] || 0;
               const roll = randomInt(1, 20);
-              const success = roll === 20 || (roll !== 1 && roll + bonus >= atk.dc);
+              const success = roll + bonus >= atk.dc;
               const dmg = rollDamageOne(atk.damage_expr);
               roundDamage += success ? 0.5 * dmg : dmg;
               continue;
@@ -1613,7 +1677,10 @@
         }
 
         for (const action of legendary) {
-          if (Math.random() >= 1 / spreadTargets) continue;
+          const targetChance = action.kind === "save"
+            ? Math.min(1, Math.max(1, safeInt(action.targets, 1)) / partySize)
+            : 1 / partySize;
+          if (Math.random() >= targetChance) continue;
           if (action.kind === "auto") {
             roundDamage += rollDamageOne(action.damage_expr);
             continue;
@@ -1621,7 +1688,7 @@
           if (action.kind === "save") {
             const bonus = saveBonuses[String(action.save_stat || "DEX").toUpperCase()] || 0;
             const roll = randomInt(1, 20);
-            const success = roll === 20 || (roll !== 1 && roll + bonus >= action.dc);
+            const success = roll + bonus >= action.dc;
             const dmg = rollDamageOne(action.damage_expr);
             roundDamage += success ? 0.5 * dmg : dmg;
             continue;
@@ -1641,7 +1708,7 @@
         }
 
         if (opts.lair_enabled && rnd % Math.max(1, safeInt(opts.lair_every_n, 1)) === 0) {
-          const pTarget = Math.min(1, safeFloat(opts.lair_targets, 1) / spreadTargets);
+          const pTarget = Math.min(1, safeFloat(opts.lair_targets, 1) / partySize);
           if (Math.random() < pTarget) {
             roundDamage += rollDamageOne(opts.lair_formula || damageFormulaForAverage(opts.lair_avg, 6));
           }
@@ -1649,14 +1716,14 @@
 
         if (opts.rech_enabled) {
           const pRech = parseRecharge(opts.recharge_text || "5-6");
-          const pTarget = Math.min(1, safeFloat(opts.rech_targets, 1) / spreadTargets);
+          const pTarget = Math.min(1, safeFloat(opts.rech_targets, 1) / partySize);
           if (Math.random() < pRech && Math.random() < pTarget) {
             roundDamage += rollDamageOne(opts.rech_formula || damageFormulaForAverage(opts.rech_avg, 6));
           }
         }
 
         for (const mech of mechanicsForRound(mechanics, rnd)) {
-          const pTarget = Math.min(1, safeFloat(mech.targets, 1) / spreadTargets);
+          const pTarget = Math.min(1, safeFloat(mech.targets, 1) / partySize);
           if (Math.random() < pTarget) {
             roundDamage += rollMechanicDamageVsPc(mech, pcRow, currentMode, currentAc, saveBonuses);
           }
@@ -1698,7 +1765,6 @@
     const resist = Math.max(1e-6, safeFloat(opts.resist_factor, 1.0));
     const regen = Math.max(0, safeFloat(opts.boss_regen, 0.0));
     const thpAvg = Math.max(0, averageDamage(opts.thp_expr || "0"));
-    const spreadTargets = Math.max(1, safeInt(opts.spread_targets, 1));
     const initMode = String(opts.initiative_mode || "random");
     const useNova = Boolean(opts.enc_use_nova);
     const dprCv = clamp(safeFloat(opts.dpr_cv, 0.6), 0.05, 2.0);
@@ -1791,11 +1857,11 @@
       }
 
       if (bossRawDamage > 0) {
-        let bossDamage = Math.max(0, bossRawDamage / resist - regen);
+        let bossDamage = Math.max(0, bossRawDamage / resist);
         if (tightPacing && roundNumber > tightTargetRound && tightAntiSlogMult > 1) {
           bossDamage *= Math.pow(tightAntiSlogMult, roundNumber - tightTargetRound);
         }
-        if (tightPacing && roundNumber <= tightTargetRound && tightResourcesLeft[t] > 0) {
+        if (tightPacing && roundNumber < tightTargetRound && tightResourcesLeft[t] > 0) {
           const roundCap = bossMaxHp * tightCapPct;
           const remainingCap = Math.max(0, roundCap - bossDamageThisRound[t]);
           if (bossDamage > remainingCap) {
@@ -1807,9 +1873,6 @@
         bossHp[t] -= bossDamage;
         if (tightPacing && roundNumber < tightMinRound && bossHp[t] <= 0) {
           bossHp[t] = 1;
-        }
-        if (tightPacing && roundNumber >= tightTargetRound && bossHp[t] > 0 && bossDamageThisRound[t] > 0) {
-          bossHp[t] = 0;
         }
       }
 
@@ -1847,6 +1910,12 @@
 
       for (let t = 0; t < trials; t += 1) {
         if (Number.isFinite(ttk[t])) continue;
+
+        // Regeneration occurs on the boss turn, restores previously lost HP,
+        // and cannot save a boss already reduced to zero by a party-first turn.
+        if (regen > 0 && bossHp[t] > 0) {
+          bossHp[t] = Math.min(bossMaxHp, bossHp[t] + regen);
+        }
 
         const currentAc = pcAc.slice();
         const currentMode = new Array(P).fill(String(opts.mode_select || "normal"));
@@ -1892,9 +1961,6 @@
           continue;
         }
 
-        const poolSize = Math.min(spreadTargets, aliveNow.length);
-        const roundPool = sampleWithoutReplacement(aliveNow, poolSize);
-
         for (let a = 0; a < attacks.length; a += 1) {
           const atk = attacks[a];
           if (atk.uses_per_round <= 0) continue;
@@ -1902,56 +1968,55 @@
           const availableUses = Math.min(atk.uses_per_round, attackUsesRemaining[t][a]);
           for (let use = 0; use < availableUses; use += 1) {
             attackUsesRemaining[t][a] -= 1;
-            let alivePool = roundPool.filter((idx) => pcsAlive[t][idx]);
-            if (!alivePool.length) {
-              alivePool = aliveIndicesForTrial(pcsAlive[t]);
-              if (!alivePool.length) break;
-            }
+            const alivePool = aliveIndicesForTrial(pcsAlive[t]);
+            if (!alivePool.length) break;
+            const targets = atk.kind === "save"
+              ? sampleWithoutReplacement(alivePool, Math.min(Math.max(1, safeInt(atk.targets, 1)), alivePool.length))
+              : [alivePool[randomInt(0, alivePool.length - 1)]];
 
-            const target = alivePool[randomInt(0, alivePool.length - 1)];
-            if (!pcsAlive[t][target]) continue;
+            for (const target of targets) {
+              let rawDealt = 0;
 
-            let rawDealt = 0;
+              if (atk.kind === "save") {
+                const saveIdx = saveIndex[String(atk.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
+                const bonus = pcSaves[target][saveIdx];
+                const roll = randomInt(1, 20);
+                const success = roll + bonus >= atk.dc;
+                const dmg = rollDamageOne(atk.damage_expr);
+                rawDealt = success ? 0.5 * dmg : dmg;
+              } else {
+                const r1 = randomInt(1, 20);
+                const r2 = randomInt(1, 20);
+                let r = r1;
+                if (currentMode[target] === "adv") r = Math.max(r1, r2);
+                if (currentMode[target] === "dis") r = Math.min(r1, r2);
 
-            if (atk.kind === "save") {
-              const saveIdx = saveIndex[String(atk.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
-              const bonus = pcSaves[target][saveIdx];
-              const roll = randomInt(1, 20);
-              const success = roll === 20 || (roll !== 1 && roll + bonus >= atk.dc);
-              const dmg = rollDamageOne(atk.damage_expr);
-              rawDealt = success ? 0.5 * dmg : dmg;
-            } else {
-              const r1 = randomInt(1, 20);
-              const r2 = randomInt(1, 20);
-              let r = r1;
-              if (currentMode[target] === "adv") r = Math.max(r1, r2);
-              if (currentMode[target] === "dis") r = Math.min(r1, r2);
+                const isCrit = r >= (atk.crit_threshold ?? 20);
+                const isHit = isCrit || (r !== 1 && r + atk.attack_bonus >= currentAc[target]);
 
-              const isCrit = r >= (atk.crit_threshold ?? 20);
-              const isHit = isCrit || (r !== 1 && r + atk.attack_bonus >= currentAc[target]);
-
-              if (isHit) {
-                rawDealt = isCrit ? rollDamageCrunchyCritOne(atk.damage_expr) : rollDamageOne(atk.damage_expr);
-                if (atk.is_melee || !opts.rider_melee_only) {
-                  riderTrig[target] = true;
+                if (isHit) {
+                  rawDealt = isCrit ? rollDamageCrunchyCritOne(atk.damage_expr) : rollDamageOne(atk.damage_expr);
+                  if (atk.is_melee || !opts.rider_melee_only) {
+                    riderTrig[target] = true;
+                  }
                 }
               }
-            }
 
-            applyDamage(target, Math.max(0, rawDealt * dprMult));
+              applyDamage(target, Math.max(0, rawDealt * dprMult));
+            }
           }
         }
 
         for (const action of legendary) {
-          let alivePool = roundPool.filter((idx) => pcsAlive[t][idx]);
-          if (!alivePool.length) {
-            alivePool = aliveIndicesForTrial(pcsAlive[t]);
-            if (!alivePool.length) break;
+          const alivePool = aliveIndicesForTrial(pcsAlive[t]);
+          if (!alivePool.length) break;
+          const targets = action.kind === "save"
+            ? sampleWithoutReplacement(alivePool, Math.min(Math.max(1, safeInt(action.targets, 1)), alivePool.length))
+            : [alivePool[randomInt(0, alivePool.length - 1)]];
+          for (const target of targets) {
+            const rawDealt = rollBossActionDamageForTarget(action, target, currentAc, currentMode, pcSaves, saveIndex);
+            applyDamage(target, Math.max(0, rawDealt * dprMult));
           }
-
-          const target = alivePool[randomInt(0, alivePool.length - 1)];
-          const rawDealt = rollBossActionDamageForTarget(action, target, currentAc, currentMode, pcSaves, saveIndex);
-          applyDamage(target, Math.max(0, rawDealt * dprMult));
         }
 
         for (const mech of mechanicsForRound(mechanics, rnd)) {
@@ -1991,17 +2056,27 @@
           }
         }
 
-        // Minion pack attacks: living minions deal damage to each alive PC based on their AC/saves.
+        // Each living minion independently targets its attack and its save ability.
         if (mcHasMinionPack && mcMinionHasDmg && mcMinionPoolHp[t] > 0) {
-          aliveNow = aliveIndicesForTrial(pcsAlive[t]);
-          if (aliveNow.length) {
-            const minionsLeft = Math.ceil(mcMinionPoolHp[t] / mcMinionHpEach);
-            for (let m = 0; m < minionsLeft; m += 1) {
+          const minionsLeft = Math.ceil(mcMinionPoolHp[t] / mcMinionHpEach);
+          for (let m = 0; m < minionsLeft; m += 1) {
+            if (opts.minion_atk_enabled) {
               aliveNow = aliveIndicesForTrial(pcsAlive[t]);
               if (!aliveNow.length) break;
               const idx = aliveNow[randomInt(0, aliveNow.length - 1)];
-              const raw = sampleMinionDamageVsPc(idx, pcAc, pcSaves, saveIndex, opts);
+              const raw = sampleMinionAttackDamageVsPc(idx, pcAc, opts);
               applyDamage(idx, Math.max(0, raw * dprMult));
+            }
+
+            if (opts.minion_save_enabled) {
+              aliveNow = aliveIndicesForTrial(pcsAlive[t]);
+              if (!aliveNow.length) break;
+              const targetCount = Math.min(Math.max(1, safeInt(opts.minion_save_targets, 1)), aliveNow.length);
+              const targets = sampleWithoutReplacement(aliveNow, targetCount);
+              for (const idx of targets) {
+                const raw = sampleMinionSaveDamageVsPc(idx, pcSaves, saveIndex, opts);
+                applyDamage(idx, Math.max(0, raw * dprMult));
+              }
             }
           }
         }
@@ -2028,9 +2103,8 @@
     const times = [];
     for (let t = 0; t <= maxRounds; t += 1) times.push(t);
     const finiteTtk = ttk.filter((v) => Number.isFinite(v));
-    const nKills = finiteTtk.length;
     const survivalCurve = times.map((round) =>
-      nKills > 0 ? finiteTtk.filter((v) => v > round).length / nKills : 0
+      ttk.length > 0 ? ttk.filter((v) => v > round).length / ttk.length : 0
     );
 
     const downFinite = [];
@@ -2114,7 +2188,7 @@
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(state, party.length);
-    const spread = Math.max(1, safeInt(state.spread_targets, 1));
+    const partySize = Math.max(1, party.length);
     const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const dprMult = bossDprMultiplier(state);
 
@@ -2123,7 +2197,6 @@
     let unassistedLastDownRound = 0;
     let targetAttackDpr = 0;
     let targetBossDprMult = null;
-    let firstPcDangerMult = Infinity;
     let tpkPressureMult = null;
     let toughestPcName = null;
     const firstDangerRound = targetFirstPcDangerRound(targetRounds);
@@ -2132,11 +2205,10 @@
 
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
-      const rawAttackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, targetRounds);
-      const rawLegendaryDpr = legendaryActionsPerTargetDpr(pc, state.mode_select || "normal", legendary, state.legendary_action_budget);
+      const recurring = recurringBossDprPerPc(pc, attacks, legendary, targetRounds, partySize, state);
       const rawPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, targetRounds);
-      const pcMinionDpr = minionDprVsPc(pc);
-      const rawIncomingPerPc = (rawAttackDpr + rawLegendaryDpr) / spread + lairRechDpr + pcMinionDpr + rawPhaseDpr;
+      const pcMinionDpr = minionDprVsPc(pc, targetRounds, useNova);
+      const rawIncomingPerPc = recurring.attackDpr + recurring.legendaryDpr + lairRechDpr + pcMinionDpr + rawPhaseDpr;
       const totalDprPerPc = rawIncomingPerPc * dprMult;
       const unassistedNetDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
       const netDprPerPc = Math.max(0, unassistedNetDprPerPc - healingPerPc);
@@ -2158,21 +2230,17 @@
         ? Math.max(0, (pcHp / firstDangerRound + thpAvg + healingPerPc) / rawIncomingPerPc)
         : Infinity;
 
-      if (Number.isFinite(targetMultForFirstDanger)) {
-        firstPcDangerMult = Math.min(firstPcDangerMult, targetMultForFirstDanger);
-      }
       if (Number.isFinite(targetMultForWipe) && (tpkPressureMult == null || targetMultForWipe > tpkPressureMult)) {
         tpkPressureMult = targetMultForWipe;
         toughestPcName = pc.Name || "?";
       }
 
-      const targetMultForPc = targetMultForWipe;
       pcRows.push({
         PC: pc.Name || "?",
         HP: pcHp,
         AC: safeInt(pc.AC, 10),
         "Base DPR/target": round2(rawIncomingPerPc),
-        "Legendary DPR": round2(rawLegendaryDpr / spread),
+        "Legendary DPR": round2(recurring.legendaryDpr),
         "Script DPR": round2(rawPhaseDpr),
         "Minion DPR": round2(pcMinionDpr * dprMult),
         "Scaled DPR/target": round2(totalDprPerPc),
@@ -2186,10 +2254,10 @@
       });
     }
 
-    targetBossDprMult = Math.max(
-      Number.isFinite(firstPcDangerMult) ? firstPcDangerMult : 0,
-      Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0
-    );
+    // Full-party collapse is the pressure target. First-PC danger remains a
+    // diagnostic because stochastic focus fire, not duplicated average DPR,
+    // determines which individual falls first.
+    targetBossDprMult = Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0;
     if (targetBossDprMult <= 0) targetBossDprMult = null;
     targetAttackDpr = targetBossDprMult == null ? 0 : round2(targetBossDprMult);
 
@@ -2231,7 +2299,7 @@
     const dprMult = clamp(safeFloat(mult, 1), 0, 20);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(state, party.length);
-    const spread = Math.max(1, safeInt(state.spread_targets, 1));
+    const partySize = Math.max(1, party.length);
     const rounds = Math.max(1, safeFloat(horizonRounds, 5));
     const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
 
@@ -2239,11 +2307,10 @@
     let anyFinite = false;
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
-      const attackDpr = perRoundDprVsPc(pc, state.mode_select || "normal", attacks, rounds);
-      const legendaryDpr = legendaryActionsPerTargetDpr(pc, state.mode_select || "normal", legendary, state.legendary_action_budget);
+      const recurring = recurringBossDprPerPc(pc, attacks, legendary, rounds, partySize, state);
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, rounds);
-      const minionDpr = minionDprVsPc(pc);
-      const rawIncoming = (attackDpr + legendaryDpr) / spread + phaseDpr + minionDpr + lairRechDpr;
+      const minionDpr = minionDprVsPc(pc, rounds, Boolean(state.enc_use_nova));
+      const rawIncoming = recurring.attackDpr + recurring.legendaryDpr + phaseDpr + minionDpr + lairRechDpr;
       const net = Math.max(0, rawIncoming * dprMult - thpAvg - healingPerPc);
       if (net <= 0) return Infinity;
       const ttd = pcHp / net;
@@ -2529,7 +2596,10 @@
     for (const pc of pcs) {
       total += expectedBossActionDamageVsPc(action, pc, mode);
     }
-    return total / pcs.length;
+    const targets = action.kind === "save"
+      ? Math.min(pcs.length, Math.max(1, safeInt(action.targets, 1)))
+      : 1;
+    return (total / pcs.length) * targets;
   }
 
   function chooseLegendaryPlan(candidates, budget) {
@@ -2562,9 +2632,9 @@
   function isBetterLegendaryPlan(candidate, current) {
     if (!candidate) return false;
     if (!current) return true;
-    if (candidate.cost !== current.cost) return candidate.cost > current.cost;
-    if (candidate.items.length !== current.items.length) return candidate.items.length > current.items.length;
-    return candidate.expected > current.expected + 1e-9;
+    if (Math.abs(candidate.expected - current.expected) > 1e-9) return candidate.expected > current.expected;
+    if (candidate.cost !== current.cost) return candidate.cost < current.cost;
+    return candidate.items.length < current.items.length;
   }
 
   function legendaryPlanSummary(rows, budget) {
@@ -2616,17 +2686,6 @@
     }
 
     return { changes };
-  }
-
-  function bossModeTpkLine(tpk) {
-    const pct = (100 * clamp(safeFloat(tpk, 0), 0, 1)).toFixed(1);
-    if (tpk <= BOSS_TUNE_TPK_PREFERRED) {
-      return `TPK ${pct}%: preferred boss-mode band (<${(100 * BOSS_TUNE_TPK_PREFERRED).toFixed(0)}%)`;
-    }
-    if (tpk <= BOSS_TUNE_TPK_ACCEPTABLE) {
-      return `TPK ${pct}%: acceptable boss-mode band (<${(100 * BOSS_TUNE_TPK_ACCEPTABLE).toFixed(0)}%)`;
-    }
-    return `TPK ${pct}%: exceeds boss-mode acceptable band (<${(100 * BOSS_TUNE_TPK_ACCEPTABLE).toFixed(0)}%)`;
   }
 
   function renderPacingResult(r) {
@@ -2684,8 +2743,6 @@
     const bossHp = r.currentBossHp;
     const recHp = r.recommendedBossHp;
     const partyWipe = r.lastDownRound;
-    const firstDown = r.firstDownRound;
-    const firstDanger = targetFirstPcDangerRound(N);
     const minWipe = targetPartyWipeMinRound(N);
     const maxWipe = targetPartyWipeMaxRound(N);
     const wipeWindow = formatRoundWindow(minWipe, maxWipe);
@@ -2715,10 +2772,6 @@
       badge = `<span class="pacing-badge badge-warn">Hard</span>`;
       analysis = `Party wipes at round ${fmt1(partyWipe)} — too soon after the boss death target. ` +
         `Use boss DPR multiplier ${fmtMult(r.targetBossDprMult)} so full-party collapse lands by ${wipeWindow}.`;
-    } else if (firstDown == null || !Number.isFinite(firstDown) || firstDown > firstDanger) {
-      cls = "bal-easy";
-      badge = `<span class="pacing-badge badge-easy">Easy</span>`;
-      analysis = `No PC is down by round ${fmt1(firstDanger)}. Increase boss DPR to ${fmtMult(r.targetBossDprMult)} so at least one PC is near death or down by then.`;
     } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > maxWipe + 1) {
       cls = "bal-easy";
       badge = `<span class="pacing-badge badge-easy">Very Easy</span>`;
@@ -2727,7 +2780,7 @@
     } else if (partyWipe != null && partyWipe <= maxWipe) {
       cls = "bal-ok";
       badge = `<span class="pacing-badge badge-ok">Balanced</span>`;
-      analysis = `Boss dies in ${N} rounds; at least one PC is down by ${fmt1(firstDanger)} and full-party collapse is ${fmt1(partyWipe)}. ` +
+      analysis = `Boss dies in ${N} rounds and the assisted full-party depletion point is ${fmt1(partyWipe)}. ` +
         `Recommended boss HP: ${recHp} (current: ${Math.round(bossHp)}).`;
     } else {
       cls = "bal-easy";
@@ -2748,7 +2801,7 @@
     const target = targetEncounterRounds();
     const minRound = Math.min(BOSS_TUNE_MIN_ROUNDS, target);
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `<div class="pacing-advice"><strong>Boss phase gate:</strong> The boss cannot drop before round ${minRound}. Until round ${target}, it can burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. At round ${target}, remove protection and collapse the boss once the party damages it; late damage is modeled at ${antiSlog.toFixed(2)}x.</div>`;
+    return `<div class="pacing-advice"><strong>Boss phase gate:</strong> The boss cannot drop before round ${minRound}. Before round ${target}, it can burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. Protection ends at round ${target}; damage after that round escalates by ${antiSlog.toFixed(2)}x per round until the boss falls.</div>`;
   }
 
   function tightPacingAdviceText() {
@@ -2758,7 +2811,7 @@
     const target = targetEncounterRounds();
     const minRound = Math.min(BOSS_TUNE_MIN_ROUNDS, target);
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `\n\nTable rule required for these numbers:\n- The boss cannot drop before round ${minRound}; hold it at 1 HP or transition phases if needed.\n- Until round ${target}, the boss may burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- At round ${target}, remove protection and collapse the boss once the party damages it; late damage is modeled at ${antiSlog.toFixed(2)}x.\n- Without these phase gates, raw dice variance can break the 7-10 round boss-fight window.`;
+    return `\n\nTable rule required for these numbers:\n- The boss cannot drop before round ${minRound}; hold it at 1 HP or transition phases if needed.\n- Before round ${target}, the boss may burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- Protection ends at round ${target}. If the fight runs long, multiply post-target damage by ${antiSlog.toFixed(2)}x per round.\n- These gates limit early burst without predetermining the exact kill round.`;
   }
 
   function fmt1(n) {
@@ -2802,32 +2855,67 @@
     return pHitBoss > 0.001 ? pHitMinion / pHitBoss : 1;
   }
 
-  // Expected DPR of ONE minion against ONE specific PC (no partySize scaling).
-  function minionOneDprVsPc(pcRow) {
-    let dpr = 0;
-    if (state.minion_atk_enabled) {
-      const ac       = Math.max(1, safeInt(pcRow.AC, 10));
-      const atkBonus = safeInt(state.minion_atk_bonus, 4);
-      const avgDmg   = Math.max(0, safeFloat(state.minion_atk_avg, 5));
-      const pHit     = clamp((21 + atkBonus - ac) / 20, 0.05, 0.95);
-      dpr += pHit * avgDmg;
-    }
-    if (state.minion_save_enabled) {
-      const saveBonus = getSaveBonus(pcRow, state.minion_save_stat);
-      const dc        = Math.max(1, safeInt(state.minion_save_dc, 13));
-      const avgDmg    = Math.max(0, safeFloat(state.minion_save_avg, 7));
-      const pFail     = pSaveFail(dc, saveBonus);
-      dpr += (0.5 + 0.5 * pFail) * avgDmg;
-    }
-    return dpr;
+  // Expected damage when one minion attack selects this PC.
+  function minionAttackDprVsPc(pcRow) {
+    if (!state.minion_atk_enabled) return 0;
+    const ac = Math.max(1, safeInt(pcRow.AC, 10));
+    const atkBonus = safeInt(state.minion_atk_bonus, 4);
+    const avgDmg = Math.max(0, safeFloat(state.minion_atk_avg, 5));
+    const pHit = clamp((21 + atkBonus - ac) / 20, 0.05, 0.95);
+    return pHit * avgDmg;
   }
 
-  // Full minion pack DPR against one specific PC, distributed across the full party size.
-  function minionDprVsPc(pcRow) {
+  // Expected damage when one minion save ability includes this PC.
+  function minionSaveDprVsPc(pcRow) {
+    if (!state.minion_save_enabled) return 0;
+    const saveBonus = getSaveBonus(pcRow, state.minion_save_stat);
+    const dc = Math.max(1, safeInt(state.minion_save_dc, 13));
+    const avgDmg = Math.max(0, safeFloat(state.minion_save_avg, 7));
+    const pFail = pSaveFail(dc, saveBonus);
+    return (0.5 + 0.5 * pFail) * avgDmg;
+  }
+
+  // Expected minion DPR against one PC over the selected horizon. Static
+  // minions stop contributing after the party's expected damage clears them.
+  // Initiative determines whether they attack before or after that damage.
+  function minionDprVsPc(pcRow, horizonRounds = 1, useNova = Boolean(state.enc_use_nova)) {
     const count = Math.max(0, safeInt(state.minion_count, 0));
     if (count <= 0) return 0;
     const partySize = state.party_table.filter((r) => String(r.Name || "").trim().length > 0).length || 1;
-    return (count / partySize) * minionOneDprVsPc(pcRow);
+    const rounds = Math.max(1, safeFloat(horizonRounds, 1));
+    const hpEach = Math.max(1, safeFloat(state.minion_hp, 15));
+    const totalPool = count * hpEach;
+    const partyDprVsMinions = Math.max(0, expectedPartyDprVsEnemy(useNova, state.minion_ac));
+    const replenish = Boolean(state.minion_replenish);
+    const initiative = String(state.initiative_mode || "random");
+    let poolHp = totalPool;
+    let countRounds = 0;
+    const wholeRounds = Math.ceil(rounds);
+
+    for (let round = 1; round <= wholeRounds; round += 1) {
+      if (replenish) poolHp = totalPool;
+      if (poolHp <= 0) break;
+      const roundWeight = Math.min(1, Math.max(0, rounds - (round - 1)));
+      const beforeParty = Math.ceil(poolHp / hpEach);
+      const afterPool = Math.max(0, poolHp - partyDprVsMinions);
+      const afterParty = afterPool > 0 ? Math.ceil(afterPool / hpEach) : 0;
+      const actingCount = initiative === "boss_first"
+        ? beforeParty
+        : initiative === "party_first"
+          ? afterParty
+          : (beforeParty + afterParty) / 2;
+      countRounds += actingCount * roundWeight;
+      poolHp = afterPool;
+    }
+    const averageCount = countRounds / rounds;
+
+    const saveTargets = Math.min(partySize, Math.max(1, safeInt(state.minion_save_targets, 1)));
+    const selectedChance = 1 / partySize;
+    const saveSelectedChance = saveTargets / partySize;
+    return averageCount * (
+      minionAttackDprVsPc(pcRow) * selectedChance
+      + minionSaveDprVsPc(pcRow) * saveSelectedChance
+    );
   }
 
   // Average DPR per minion, averaged over party composition (used for table display).
@@ -2836,35 +2924,30 @@
     if (count <= 0) return 0;
     const members = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     if (!members.length) return 0;
-    return members.reduce((acc, pc) => acc + minionOneDprVsPc(pc), 0) / members.length;
+    const saveTargets = Math.min(members.length, Math.max(1, safeInt(state.minion_save_targets, 1)));
+    const attackAvg = members.reduce((acc, pc) => acc + minionAttackDprVsPc(pc), 0) / members.length;
+    const saveAvg = members.reduce((acc, pc) => acc + minionSaveDprVsPc(pc), 0) / members.length;
+    return attackAvg + saveTargets * saveAvg;
   }
 
-  function sampleMinionDamageVsPc(pcIndex, pcAc, pcSaves, saveIndex, opts) {
-    let raw = 0;
+  function sampleMinionAttackDamageVsPc(pcIndex, pcAc, opts) {
+    const ac = Math.max(1, safeInt(pcAc[pcIndex], 10));
+    const atkBonus = safeInt(opts.minion_atk_bonus, 4);
+    const roll = randomInt(1, 20);
+    const hit = roll === 20 || (roll !== 1 && roll + atkBonus >= ac);
+    return hit ? rollStaticAverageDamage(opts.minion_atk_avg, 6) : 0;
+  }
 
-    if (opts.minion_atk_enabled) {
-      const ac = Math.max(1, safeInt(pcAc[pcIndex], 10));
-      const atkBonus = safeInt(opts.minion_atk_bonus, 4);
-      const roll = randomInt(1, 20);
-      const hit = roll === 20 || (roll !== 1 && roll + atkBonus >= ac);
-      if (hit) {
-        raw += rollStaticAverageDamage(opts.minion_atk_avg, 6);
-      }
-    }
-
-    if (opts.minion_save_enabled) {
-      const stat = String(opts.minion_save_stat || "DEX").toUpperCase();
-      const saveIdx = saveIndex[stat] ?? saveIndex.DEX;
-      const bonus = pcSaves[pcIndex][saveIdx];
-      const dc = Math.max(1, safeInt(opts.minion_save_dc, 13));
-      const roll = randomInt(1, 20);
-      const success = roll === 20 || (roll !== 1 && roll + bonus >= dc);
-      const avg = Math.max(0, safeFloat(opts.minion_save_avg, 7));
-      const dmg = rollStaticAverageDamage(avg, 6);
-      raw += success ? 0.5 * dmg : dmg;
-    }
-
-    return raw;
+  function sampleMinionSaveDamageVsPc(pcIndex, pcSaves, saveIndex, opts) {
+    const stat = String(opts.minion_save_stat || "DEX").toUpperCase();
+    const saveIdx = saveIndex[stat] ?? saveIndex.DEX;
+    const bonus = pcSaves[pcIndex][saveIdx];
+    const dc = Math.max(1, safeInt(opts.minion_save_dc, 13));
+    const roll = randomInt(1, 20);
+    const success = roll + bonus >= dc;
+    const avg = Math.max(0, safeFloat(opts.minion_save_avg, 7));
+    const dmg = rollStaticAverageDamage(avg, 6);
+    return success ? 0.5 * dmg : dmg;
   }
 
   // Round-by-round minion-phase simulation (deterministic, focus-fire model).
@@ -2911,9 +2994,14 @@
 
       // Party clears the full pack each round; excess spills to boss.
       const overflowBoss = Math.max(0, ((partyDprVsMinions - totalPool) / ratio) / resist - regen);
-      let round = 0;
-      while (bossHp > 0 && round < 200) {
-        round++;
+      if (overflowBoss <= 0) {
+        return { rows, minionPhaseRounds: Infinity, bossHpAfterMinionPhase: bossHp,
+                 overflowBossPerRound: 0, partyDprVsMinions, ratio,
+                 replenishing: true, canClearPerRound: true };
+      }
+      const roundsToBoss = Math.ceil(bossHp / overflowBoss);
+      const displayedRounds = Math.min(roundsToBoss, 200);
+      for (let round = 1; round <= displayedRounds; round += 1) {
         bossHp = Math.max(0, bossHp - overflowBoss);
         rows.push({
           Round: round,
@@ -2924,7 +3012,7 @@
           "Minion Team DPR":     round2(minionTeamDpr),
         });
       }
-      return { rows, minionPhaseRounds: round, bossHpAfterMinionPhase: 0,
+      return { rows, minionPhaseRounds: roundsToBoss, bossHpAfterMinionPhase: 0,
                overflowBossPerRound: overflowBoss, partyDprVsMinions, ratio,
                replenishing: true, canClearPerRound: true };
     }
@@ -2932,7 +3020,7 @@
     // ── Non-replenishing: pool depletes over multiple rounds ──────────────
     let minionPoolHp = totalPool;
     let round = 0;
-    const initialBossHp = bossHp;
+    let totalBossDmgDuringPhase = 0;
 
     while (minionPoolHp > 0 && round < 60) {
       round++;
@@ -2949,6 +3037,7 @@
       }
 
       bossHp -= dprToBoss;
+      totalBossDmgDuringPhase += dprToBoss;
 
       rows.push({
         Round: round,
@@ -2960,7 +3049,6 @@
       });
     }
 
-    const totalBossDmgDuringPhase = Math.max(0, initialBossHp - Math.max(0, bossHp));
     return { rows, minionPhaseRounds: round, bossHpAfterMinionPhase: Math.max(0, bossHp),
              totalBossDmgDuringPhase, partyDprVsMinions, ratio, replenishing: false };
   }
@@ -3127,7 +3215,7 @@
       const dc = Math.max(1, safeInt(novaRow["Save DC"], 16));
       const saveBonus = safeInt(novaRow["Target Save Bonus"], 0);
       const saveRoll = rollD20Mode(normalizeRollMode(novaRow["Roll Mode"]));
-      const success = saveRoll === 20 || (saveRoll !== 1 && saveRoll + saveBonus >= dc);
+      const success = saveRoll + saveBonus >= dc;
       const dmg = rollDamageOne(expr);
       const saveMult = clamp(safeFloat(novaRow["Save Success Mult"], 0.5), 0, 1);
       return success ? dmg * saveMult : dmg;
@@ -3203,8 +3291,9 @@
     }
   }
 
-  function perRoundDprVsPc(pcRow, mode, attacks, horizonRounds = 1) {
+  function perRoundDprVsPc(pcRow, mode, attacks, horizonRounds = 1, partySize = 1) {
     const ac = Math.max(1, safeInt(pcRow.AC, 10));
+    const pSize = Math.max(1, safeInt(partySize, 1));
     let total = 0;
 
     for (const atk of attacks) {
@@ -3216,10 +3305,64 @@
       } else {
         dpr = expectedAttackDamage(ac, atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold);
       }
-      total += dpr * uses;
+      const targetChance = atk.kind === "save"
+        ? Math.min(pSize, Math.max(1, safeInt(atk.targets, 1))) / pSize
+        : 1 / pSize;
+      total += dpr * uses * targetChance;
     }
 
     return total;
+  }
+
+  function recurringBossDprPerPc(pcRow, attacks, legendary, horizonRounds, partySize, source = state) {
+    const rounds = Math.max(1, safeFloat(horizonRounds, 1));
+    const pSize = Math.max(1, safeInt(partySize, 1));
+    const baseMode = String(source.mode_select || "normal");
+    const budget = source.legendary_action_budget;
+    const inactiveAttack = perRoundDprVsPc(pcRow, baseMode, attacks, rounds, pSize);
+    const inactiveLegendary = legendaryActionsPerTargetDpr(pcRow, baseMode, legendary, budget, pSize);
+    const riderMode = String(source.rider_mode || "none");
+
+    if (riderMode === "none") {
+      return { attackDpr: inactiveAttack, legendaryDpr: inactiveLegendary, riderUptime: 0 };
+    }
+
+    const activePc = riderMode === "-2 AC next round"
+      ? { ...pcRow, AC: Math.max(1, safeInt(pcRow.AC, 10) - 2) }
+      : pcRow;
+    const activeMode = riderMode === "grant advantage on melee next round" ? "adv" : baseMode;
+    const activeAttack = perRoundDprVsPc(activePc, activeMode, attacks, rounds, pSize);
+    const activeLegendary = legendaryActionsPerTargetDpr(activePc, activeMode, legendary, budget, pSize);
+
+    let noTrigger = 1;
+    for (const atk of attacks || []) {
+      if (atk.kind !== "attack" || (!atk.is_melee && source.rider_melee_only)) continue;
+      const uses = effectiveUsesPerRound(atk, rounds);
+      if (uses <= 0) continue;
+      const hitChance = hitProbs(
+        Math.max(1, safeInt(pcRow.AC, 10)),
+        atk.attack_bonus,
+        baseMode,
+        atk.crit_threshold
+      )[2];
+      noTrigger *= Math.pow(Math.max(0, 1 - hitChance / pSize), uses);
+    }
+    const triggerChance = 1 - noTrigger;
+    const duration = Math.max(1, safeInt(source.rider_duration, 1));
+    let uptimeTotal = 0;
+    const wholeRounds = Math.ceil(rounds);
+    for (let round = 1; round <= wholeRounds; round += 1) {
+      const roundWeight = Math.min(1, Math.max(0, rounds - (round - 1)));
+      const lookback = Math.min(duration, round - 1);
+      uptimeTotal += (1 - Math.pow(1 - triggerChance, lookback)) * roundWeight;
+    }
+    const riderUptime = clamp(uptimeTotal / rounds, 0, 1);
+
+    return {
+      attackDpr: (1 - riderUptime) * inactiveAttack + riderUptime * activeAttack,
+      legendaryDpr: (1 - riderUptime) * inactiveLegendary + riderUptime * activeLegendary,
+      riderUptime,
+    };
   }
 
   function effectiveUsesPerRound(atk, horizonRounds) {
@@ -3273,7 +3416,7 @@
     if (kind === "save") {
       const bonus = saveBonuses[String(mech.save_stat || "DEX").toUpperCase()] || 0;
       const roll = randomInt(1, 20);
-      const success = roll === 20 || (roll !== 1 && roll + bonus >= mech.dc);
+      const success = roll + bonus >= mech.dc;
       const dmg = rollDamageOne(mech.damage_expr);
       return success ? 0.5 * dmg : dmg;
     }
@@ -3298,7 +3441,7 @@
       const saveIdx = saveIndex[String(mech.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
       const bonus = pcSaves[target][saveIdx];
       const roll = randomInt(1, 20);
-      const success = roll === 20 || (roll !== 1 && roll + bonus >= mech.dc);
+      const success = roll + bonus >= mech.dc;
       const dmg = rollDamageOne(mech.damage_expr);
       return success ? 0.5 * dmg : dmg;
     }
@@ -3322,7 +3465,7 @@
       const saveIdx = saveIndex[String(action.save_stat || "DEX").toUpperCase()] ?? saveIndex.DEX;
       const bonus = pcSaves[target][saveIdx];
       const roll = randomInt(1, 20);
-      const success = roll === 20 || (roll !== 1 && roll + bonus >= action.dc);
+      const success = roll + bonus >= action.dc;
       const dmg = rollDamageOne(action.damage_expr);
       return success ? 0.5 * dmg : dmg;
     }
@@ -3395,6 +3538,7 @@
         dc: safeInt(row.DC, 0),
         save_stat: saveStat,
         damage_expr: String(row.Damage || "1d6"),
+        targets: Math.max(1, safeInt(row.Targets, 1)),
         uses_per_round: Math.max(0, safeInt(row["Uses/round"], 1)),
         uses_encounter: Math.max(0, safeInt(row["Uses/encounter"], 0)),
         is_melee: Boolean(row["Melee?"]),
@@ -3423,6 +3567,7 @@
       dc: safeInt(row.DC, 0),
       save_stat: saveStat,
       damage_expr: String(row.Damage || "1d6"),
+      targets: Math.max(1, safeInt(row.Targets, 1)),
       cost: clamp(safeInt(row.Cost, 1), 1, 4),
       uses_per_round: clamp(safeInt(row["Uses/round"], 1), 0, 1),
       crit_threshold: Math.max(2, Math.min(20, safeInt(row.Crit, 20))),
@@ -3442,10 +3587,14 @@
     return selected;
   }
 
-  function legendaryActionsPerTargetDpr(pcRow, mode, actions, budget) {
+  function legendaryActionsPerTargetDpr(pcRow, mode, actions, budget, partySize = 1) {
+    const pSize = Math.max(1, safeInt(partySize, 1));
     let total = 0;
     for (const action of selectedLegendaryActions(actions, budget)) {
-      total += expectedBossActionDamageVsPc(action, pcRow, mode);
+      const targetChance = action.kind === "save"
+        ? Math.min(pSize, Math.max(1, safeInt(action.targets, 1))) / pSize
+        : 1 / pSize;
+      total += expectedBossActionDamageVsPc(action, pcRow, mode) * targetChance;
     }
     return total;
   }
@@ -3526,9 +3675,7 @@
 
   function pSaveFail(dc, saveBonus) {
     const target = dc - saveBonus;
-    if (target <= 1) return 1 / 20;
-    if (target > 20) return 19 / 20;
-    return (target - 1) / 20;
+    return clamp((target - 1) / 20, 0, 1);
   }
 
   function pSaveFailWithMode(dc, saveBonus, mode = "normal") {
@@ -3541,7 +3688,7 @@
     for (let r1 = 1; r1 <= 20; r1 += 1) {
       for (let r2 = 1; r2 <= 20; r2 += 1) {
         const roll = normalized === "adv" ? Math.max(r1, r2) : Math.min(r1, r2);
-        const success = roll === 20 || (roll !== 1 && roll + saveBonus >= dc);
+        const success = roll + saveBonus >= dc;
         if (!success) fails += 1;
       }
     }
@@ -3569,8 +3716,8 @@
 
     if (t.includes("-")) {
       const [loS, hiS] = t.split("-", 2);
-      const loRaw = safeInt(loS, 0);
-      const hiRaw = safeInt(hiS, 0);
+      const loRaw = Number.parseInt(loS, 10);
+      const hiRaw = Number.parseInt(hiS, 10);
       if (!Number.isFinite(loRaw) || !Number.isFinite(hiRaw)) return 0;
 
       let lo = Math.min(loRaw, hiRaw);
@@ -3580,8 +3727,9 @@
       return (hi - lo + 1) / 6;
     }
 
-    const k = clamp(safeInt(t, 0), 2, 6);
-    if (!Number.isFinite(k) || k <= 0) return 0;
+    const parsed = Number.parseInt(t, 10);
+    if (!Number.isFinite(parsed)) return 0;
+    const k = clamp(parsed, 2, 6);
     return (7 - k) / 6;
   }
 
@@ -3991,6 +4139,7 @@
 
     base.party_table = (base.party_table || []).map(sanitizePartyRow);
     base.attacks_table = (base.attacks_table || []).map(sanitizeAttackRow);
+    delete base.spread_targets;
     base.legendary_action_budget = clamp(safeInt(base.legendary_action_budget, 3), 1, 4);
     base.legendary_actions_table = (base.legendary_actions_table || []).map(sanitizeLegendaryRow);
     base.phase_table = (base.phase_table || []).map(sanitizePhaseRow);
@@ -3998,7 +4147,6 @@
     base.party_nova_table = (base.party_nova_table || []).map(sanitizeNovaRow);
 
     base.mode_select = ["normal", "adv", "dis"].includes(String(base.mode_select)) ? String(base.mode_select) : "normal";
-    base.spread_targets = Math.max(1, safeInt(base.spread_targets, 1));
     base.thp_expr = String(base.thp_expr || "0");
     base.party_healing_per_round = Math.max(0, safeFloat(base.party_healing_per_round, 0));
 
@@ -4070,6 +4218,7 @@
       ? String(base.minion_save_stat).toUpperCase() : "DEX";
     base.minion_save_dc      = clamp(safeInt(base.minion_save_dc, 13), 1, 30);
     base.minion_save_avg     = Math.max(0, safeFloat(base.minion_save_avg, 7));
+    base.minion_save_targets = Math.max(1, safeInt(base.minion_save_targets, 1));
 
     syncPartyDependentRows(base);
     return base;
@@ -4180,6 +4329,7 @@
       DC: safeInt(row.DC, 0),
       Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
       Damage: String(row.Damage || "1d6").trim() || "1d6",
+      Targets: Math.max(1, safeInt(row.Targets, 1)),
       "Uses/round": Math.max(0, safeInt(row["Uses/round"], 1)),
       "Uses/encounter": Math.max(0, safeInt(row["Uses/encounter"], 0)),
       "Melee?": Boolean(row["Melee?"]),
@@ -4197,6 +4347,7 @@
       DC: safeInt(row.DC, 0),
       Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
       Damage: String(row.Damage || "1d6").trim() || "1d6",
+      Targets: Math.max(1, safeInt(row.Targets, 1)),
       Cost: clamp(safeInt(row.Cost, 1), 1, 4),
       "Uses/round": clamp(safeInt(row["Uses/round"], 1), 0, 1),
       "Enabled?": Boolean(row["Enabled?"]),

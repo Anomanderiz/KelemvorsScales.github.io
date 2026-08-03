@@ -76,13 +76,13 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle.
 
-Auto-Tune (HP): set target median rounds and TPK cap; click Auto-Tune HP.
+Tune Everything: set target rounds, kill-rate target, and TPK cap. The tuner proposes deterministic pacing, then searches HP and pressure against Monte Carlo trials.
 
 Outcome Summary + Survival Curve + TTK Distribution.
 
 How to read the numbers (plain language)
 
-Median TTK: the â€œtypicalâ€ fight length. Aim for 3â€“5 rounds unless you like marathons.
+Median TTK: the â€œtypicalâ€ fight length. Boss-mode tuning defaults to 10 rounds and supports targets from 7â€“10 rounds.
 
 p10â€“p90: middle 80% of outcomes.
 
@@ -142,9 +142,9 @@ Save-for-half: expected damage = 0.5+0.5â‹…ð‘ƒ(fail) times average da
 
 Initiative: if the boss acts first, PCs might lose actions that round if they drop before swinging.
 
-Resist/regen/THP/healing: applied after damage sampling each round. THP is per target; expected healing is entered as a party total and divided evenly across active PCs.
+Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. THP is per target, while expected healing is entered as a party total and divided evenly across active PCs.
 
-Spread targets (N): each round, the boss randomly selects up to N distinct living PCs, and spreads attacks among that pool (uniformly).
+Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules.
 
 Balancing playbook
 
@@ -169,7 +169,7 @@ Re-run until guardrails show âœ“.
 - **Download & run (Windows):** grab the latest release, unzip, double-click `KelemvorsScales.exe`.
 - **Basic workflow (5 minutes):**
   1. **Party & DPR** tab: enter each PCâ€™s **AC**, **HP**, and **save bonuses**; add either **Manual DPR** or **Novaâ†’Effective** rows.
-  2. **Boss Kit** tab: add the bossâ€™s attacks (to-hit/DC, damage, uses/round, melee?), plus **lair**, **recharge**, and any **on-hit rider**.
+  2. **Boss Kit** tab: add the bossâ€™s attacks (to-hit/DC, damage, save targets, uses/round, melee?), plus **lair**, **recharge**, and any **on-hit rider**.
   3. **âš”ï¸ Encounter MC** tab: set **Trials** (10â€“30k), **Max Rounds** (~12), **Initiative** (random), and the **Party DPR CV** (variance, default 0.60).
   4. Click **Run Encounter Simulation**. Read **Median TTK**, **p10â€“p90**, **TPK%**, and **PCs down**.
   5. If pacingâ€™s off, hit **Auto-Tune HP** to land on your target **median** rounds.
@@ -179,14 +179,14 @@ Re-run until guardrails show âœ“.
 ## Features
 
 - **Encounter Monte Carlo:** full fights, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, per-target THP/round, expected party healing, regen/resistance, PCs dropping.
-- **Auto-Tune (HP):** pick a target **median TTK** and optional **TPK cap**; the tuner searches HP and verifies with a full simulation.
+- **Tune Everything:** proposes boss durability and pressure deterministically, then searches for the highest HP that meets the configured kill-rate target and TPK cap. Band width is reported as a warning.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)
   - `P(TTK â‰¥ slow) â‰¤ cap` (avoid slogs)
   - `P(â‰¥ K PCs down at victory) â‰ˆ target` (lethality band)
   - `P(TPK) â‰¤ cap`
-- **Charts:** **Survival curve** (risk/percentiles) and **TTK distribution** (shape/modes).
-- **Targeting that makes sense:** â€œSpread across Nâ€ samples uniformly from **all living PCs** each round (no list-order bias).
+- **Charts:** unconditional **boss survival curve** across all trials and a successful-kill **TTK distribution**.
+- **Per-use targeting:** every attack independently samples from **all living PCs**; each save ability samples its configured number of distinct targets. Minions use the same rules.
 - **Crunchy crits:** crit = *max dice + one rolled* (modifier once) for attack rolls; save-based effects donâ€™t crit (RAW).
 
 ---

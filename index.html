@@ -103,6 +103,7 @@
               <button id="btnAddLimitedAttackRow" class="btn">+ Limited Ability</button>
             </div>
           </div>
+          <p class="hint">Each attack use independently selects a random living PC. Save abilities select up to their Save Targets value without duplicates each time they fire.</p>
           <div id="attacksTable" class="table-mount"></div>
         </div>
 
@@ -116,6 +117,7 @@
               <button id="btnAddLegendaryAction" class="btn btn-accent">+ Add Legendary</button>
             </div>
           </div>
+          <p class="hint">Attack and auto actions select one random living PC. Save actions use their own Save Targets value.</p>
           <div id="legendaryTable" class="table-mount"></div>
         </div>
 
@@ -129,9 +131,6 @@
                   <option value="adv">Advantage</option>
                   <option value="dis">Disadvantage</option>
                 </select>
-              </label>
-              <label>Spread Attacks Across (PCs)
-                <input id="optSpreadTargets" type="number" min="1" max="20" step="1">
               </label>
               <label>Per-Target THP / Round
                 <input id="optThpExpr" type="text" placeholder="e.g. 1d6+4">
@@ -194,7 +193,7 @@
 
         <div class="card">
           <h2>Minion Pack — Damage</h2>
-          <p class="hint">Damage each minion deals per round, split across party members. Enable to-hit, save, or both. Damage is adjusted per PC using their AC and save bonuses from the Party table.</p>
+          <p class="hint">Each minion independently selects a random living PC for its attack and a fresh set of living PCs for its save. Enable either or both; AC and save bonuses come from the Party table.</p>
           <div class="form-grid">
             <label class="checkbox span-full">
               <input id="optMinionAtkEnabled" type="checkbox"> To-Hit Attack
@@ -224,6 +223,9 @@
             </label>
             <label>Avg Dmg per Minion
               <input id="optMinionSaveAvg" type="number" min="0" max="999" step="0.5">
+            </label>
+            <label>Targets per Save
+              <input id="optMinionSaveTargets" type="number" min="1" max="20" step="1">
             </label>
           </div>
         </div>
@@ -357,8 +359,8 @@
             <h2>Encounter Balancer</h2>
           </div>
           <p class="hint">
-            One target drives both modes: deterministic pacing sets exact boss HP and DPR targets,
-            while Monte Carlo validates median TTK, TPK probability, and casualty risk.
+            Deterministic pacing proposes boss HP and DPR. Tune Everything then uses Monte Carlo
+            to enforce kill-rate and TPK targets; band width remains a variability warning.
           </p>
           <div class="form-grid">
             <label>Target Encounter Rounds
@@ -391,7 +393,7 @@
             <label>Kill Rate Target (0.50–0.95)
               <input id="tuneKillRate" type="number" min="0.50" max="0.95" step="0.01">
             </label>
-            <label>Max Band Width (rounds)
+            <label>Band Warning Width (rounds)
               <input id="tuneBandMax" type="number" min="0.5" max="10" step="0.1">
             </label>
           </div>
