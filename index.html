@@ -136,6 +136,9 @@
               <label>Per-Target THP / Round
                 <input id="optThpExpr" type="text" placeholder="e.g. 1d6+4">
               </label>
+              <label>Expected Party Healing / Round
+                <input id="optPartyHealingPerRound" type="number" min="0" max="9999" step="0.1" title="Party-wide average, divided evenly across all PCs for pacing and simulation.">
+              </label>
               <label>Boss HP
                 <input id="optBossHp" type="number" min="1" max="99999" step="1">
               </label>
@@ -412,7 +415,7 @@
           <div class="card metric-card">
             <div class="metric-label">Party Wipe</div>
             <div class="metric-value" id="pacingPartyWipe">-</div>
-            <div class="metric-sub">deterministic round</div>
+            <div class="metric-sub" id="pacingPartyWipeSub">with expected healing</div>
           </div>
           <div class="card metric-card">
             <div class="metric-label">Boss DPR Mult</div>

@@ -58,6 +58,8 @@ Optional: Lair (avg dmg, #targets, cadence), Recharge (e.g., 5-6, avg dmg, #targ
 
 Rider: on-hit effect that grants advantage next round or reduces target AC; duration in rounds.
 
+Expected Party Healing / Round is a party-wide sustain average. The calculator divides it evenly across active PCs; it raises the boss-pressure budget without changing boss HP or the target encounter duration.
+
 ## ðŸ“ˆ Deterministic DPR
 
 Fast, average-based snapshot of boss damage versus each PC.
@@ -140,7 +142,7 @@ Save-for-half: expected damage = 0.5+0.5â‹…ð‘ƒ(fail) times average da
 
 Initiative: if the boss acts first, PCs might lose actions that round if they drop before swinging.
 
-Resist/regen/THP: applied after damage sampling each round.
+Resist/regen/THP/healing: applied after damage sampling each round. THP is per target; expected healing is entered as a party total and divided evenly across active PCs.
 
 Spread targets (N): each round, the boss randomly selects up to N distinct living PCs, and spreads attacks among that pool (uniformly).
 
@@ -176,7 +178,7 @@ Re-run until guardrails show âœ“.
 
 ## Features
 
-- **Encounter Monte Carlo:** full fights, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, per-target THP/round, regen/resistance, PCs dropping.
+- **Encounter Monte Carlo:** full fights, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, per-target THP/round, expected party healing, regen/resistance, PCs dropping.
 - **Auto-Tune (HP):** pick a target **median TTK** and optional **TPK cap**; the tuner searches HP and verifies with a full simulation.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)

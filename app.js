@@ -10,8 +10,8 @@
   const BOSS_TUNE_MIN_ROUNDS = 7;
   const BOSS_TUNE_MAX_ROUNDS = 10;
   const FIRST_PC_DANGER_GRACE_ROUNDS = 1;
-  const TPK_GRACE_MIN_ROUNDS = 3;
-  const TPK_GRACE_MAX_ROUNDS = 4;
+  const TPK_GRACE_MIN_ROUNDS = 2;
+  const TPK_GRACE_MAX_ROUNDS = 3;
   const BOSS_TUNE_TPK_PREFERRED = 0.06;
   const BOSS_TUNE_TPK_ACCEPTABLE = 0.10;
   const REPLENISHING_MINION_ABSORB_FRACTION = 0.65;
@@ -50,6 +50,7 @@
     mode_select: "normal",
     spread_targets: 1,
     thp_expr: "0",
+    party_healing_per_round: 0,
 
     lair_enabled: false,
     lair_avg: 6.0,
@@ -260,7 +261,7 @@
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
       "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable", "optLegendaryBudget", "btnAddLegendaryAction", "legendaryTable", "btnAddPhaseMechanic", "phaseTable",
-      "optModeSelect", "optSpreadTargets", "optThpExpr", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
+      "optModeSelect", "optSpreadTargets", "optThpExpr", "optPartyHealingPerRound", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
       "optLairEnabled", "optLairAvg", "optLairFormula", "optLairTargets", "optLairEveryN",
       "optRechEnabled", "optRechargeText", "optRechAvg", "optRechFormula", "optRechTargets",
       "optRiderMode", "optRiderDuration", "optRiderMeleeOnly",
@@ -276,7 +277,7 @@
       "survChart", "ttkChart",
       "reportText",
       "pacingRounds",
-      "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe",
+      "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe", "pacingPartyWipeSub",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
       "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish",
       "optMinionAtkEnabled", "optMinionAtkBonus", "optMinionAtkAvg",
@@ -464,6 +465,7 @@
     bindControl("optModeSelect", "mode_select", (el) => String(el.value || "normal"));
     bindControl("optSpreadTargets", "spread_targets", (el) => Math.max(1, safeInt(el.value, 1)));
     bindControl("optThpExpr", "thp_expr", (el) => String(el.value || "0").trim() || "0");
+    bindControl("optPartyHealingPerRound", "party_healing_per_round", (el) => Math.max(0, safeFloat(el.value, 0)));
 
     bindControl("optBossHp", "boss_hp", (el) => Math.max(1, safeInt(el.value, 150)), { refreshEff: true });
     bindControl("optBossAc", "boss_ac", (el) => Math.max(1, safeInt(el.value, 16)), { syncParty: true, renderParty: true, refreshEff: true });
@@ -612,6 +614,7 @@
     setControlValue(els.optModeSelect, state.mode_select);
     setControlValue(els.optSpreadTargets, state.spread_targets);
     setControlValue(els.optThpExpr, state.thp_expr);
+    setControlValue(els.optPartyHealingPerRound, state.party_healing_per_round);
 
     setControlValue(els.optBossHp, state.boss_hp);
     setControlValue(els.optBossAc, state.boss_ac);
@@ -977,6 +980,7 @@
     const dprMult = bossDprMultiplier(state);
     const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
+    const healingPerPc = partyHealingPerPc(state, party.length);
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const horizonRounds = Math.max(1, safeInt(state.pacing_rounds || state.enc_max_rounds, 1));
 
@@ -990,7 +994,7 @@
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, horizonRounds);
       const minionDpr = minionDprVsPc(pc);
       const total = ((baseDpr + legendaryDpr) / spread + lairRechDpr + minionDpr + phaseDpr) * dprMult;
-      const net = Math.max(0, total - thpAvg);
+      const net = Math.max(0, total - thpAvg - healingPerPc);
       const hp = Math.max(1, safeInt(pc.HP, 1));
       const exact = net > 0 ? hp / net : Number.POSITIVE_INFINITY;
       const ceil = Number.isFinite(exact) ? Math.ceil(exact) : null;
@@ -1003,7 +1007,8 @@
         "DPR (legendary)": round2(legendaryDpr / spread),
         "DPR (mechanics)": round2(phaseDpr),
         "DPR (total)": round2(total),
-        "Net DPR (after THP)": round2(net),
+        "Healing / round": round2(healingPerPc),
+        "Net DPR (after sustain)": round2(net),
         "Rounds to 0 (exact)": Number.isFinite(exact) ? exact.toFixed(2) : "inf",
         "Rounds to 0 (ceil)": Number.isFinite(exact) ? Math.ceil(exact) : "inf",
       });
@@ -1547,6 +1552,7 @@
       saveBonuses[key] = safeInt(pcRow[key], 0);
     }
     const thpAvg = Math.max(0, averageDamage(opts.thp_expr || "0"));
+    const healingPerPc = partyHealingPerPc(opts, activePartySize(opts));
     const spreadTargets = Math.max(1, safeInt(opts.spread_targets, 1));
     const dprMult = bossDprMultiplier(opts);
 
@@ -1656,7 +1662,7 @@
           }
         }
 
-        totalDamage[i] += Math.max(0, roundDamage * dprMult - thpAvg);
+        totalDamage[i] += Math.max(0, roundDamage * dprMult - thpAvg - healingPerPc);
 
         riderRemaining[i] = Math.max(0, riderRemaining[i] - 1);
         if (triggeredRider) {
@@ -1712,6 +1718,7 @@
 
     const partyNames = party.map((pc, i) => String(pc.Name || `PC${i + 1}`));
     const P = partyNames.length;
+    const healingPerPc = partyHealingPerPc(opts, P);
     const effByName = new Map(effList.map((r) => [String(r[0]), safeFloat(r[1], 0)]));
     const effMeans = partyNames.map((name) => effByName.get(name) || 0);
 
@@ -1862,11 +1869,15 @@
 
         const riderTrig = new Array(P).fill(false);
         const thpPool = new Array(P).fill(thpAvg);
+        const healingPool = new Array(P).fill(healingPerPc);
 
         const applyDamage = (target, rawDamage) => {
           const blocked = Math.min(rawDamage, thpPool[target]);
           thpPool[target] -= blocked;
-          const dealt = rawDamage - blocked;
+          const afterThp = rawDamage - blocked;
+          const healed = Math.min(afterThp, healingPool[target]);
+          healingPool[target] -= healed;
+          const dealt = afterThp - healed;
           if (dealt <= 0) return;
 
           pcsHp[t][target] -= dealt;
@@ -2102,12 +2113,14 @@
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
+    const healingPerPc = partyHealingPerPc(state, party.length);
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const dprMult = bossDprMultiplier(state);
 
     let firstDownRound = Infinity;
     let lastDownRound = 0;
+    let unassistedLastDownRound = 0;
     let targetAttackDpr = 0;
     let targetBossDprMult = null;
     let firstPcDangerMult = Infinity;
@@ -2125,19 +2138,24 @@
       const pcMinionDpr = minionDprVsPc(pc);
       const rawIncomingPerPc = (rawAttackDpr + rawLegendaryDpr) / spread + lairRechDpr + pcMinionDpr + rawPhaseDpr;
       const totalDprPerPc = rawIncomingPerPc * dprMult;
-      const netDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
+      const unassistedNetDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
+      const netDprPerPc = Math.max(0, unassistedNetDprPerPc - healingPerPc);
       const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
+      const unassistedPcTtd = unassistedNetDprPerPc > 0 ? pcHp / unassistedNetDprPerPc : Infinity;
 
       if (Number.isFinite(pcTtd)) {
         firstDownRound = Math.min(firstDownRound, pcTtd);
         lastDownRound = Math.max(lastDownRound, pcTtd);
       }
+      if (Number.isFinite(unassistedPcTtd)) {
+        unassistedLastDownRound = Math.max(unassistedLastDownRound, unassistedPcTtd);
+      }
 
       const targetMultForWipe = rawIncomingPerPc > 0
-        ? Math.max(0, (pcHp / wipeBudgetRound + thpAvg) / rawIncomingPerPc)
+        ? Math.max(0, (pcHp / wipeBudgetRound + thpAvg + healingPerPc) / rawIncomingPerPc)
         : Infinity;
       const targetMultForFirstDanger = rawIncomingPerPc > 0
-        ? Math.max(0, (pcHp / firstDangerRound + thpAvg) / rawIncomingPerPc)
+        ? Math.max(0, (pcHp / firstDangerRound + thpAvg + healingPerPc) / rawIncomingPerPc)
         : Infinity;
 
       if (Number.isFinite(targetMultForFirstDanger)) {
@@ -2158,7 +2176,9 @@
         "Script DPR": round2(rawPhaseDpr),
         "Minion DPR": round2(pcMinionDpr * dprMult),
         "Scaled DPR/target": round2(totalDprPerPc),
+        "Healing/R": round2(healingPerPc),
         "Net DPR": round2(netDprPerPc),
+        "Unassisted TTD": Number.isFinite(unassistedPcTtd) ? unassistedPcTtd.toFixed(1) : "∞",
         "First Danger Mult": Number.isFinite(targetMultForFirstDanger) ? `${targetMultForFirstDanger.toFixed(2)}x` : "N/A",
         "TPK Mult": Number.isFinite(targetMultForWipe) ? `${targetMultForWipe.toFixed(2)}x` : "N/A",
         "TTD (exact)": Number.isFinite(pcTtd) ? pcTtd.toFixed(1) : "∞",
@@ -2180,6 +2200,7 @@
       effectivePartyDprOnBoss,
       firstDownRound: Number.isFinite(firstDownRound) ? firstDownRound : null,
       lastDownRound: lastDownRound > 0 ? lastDownRound : null,
+      unassistedLastDownRound: unassistedLastDownRound > 0 ? unassistedLastDownRound : null,
       targetAttackDpr: round2(targetAttackDpr),
       targetBossDprMult: targetBossDprMult == null ? null : round2(targetBossDprMult),
       bossDprMult: dprMult,
@@ -2188,6 +2209,7 @@
       pcRows,
       lairRechDpr,
       thpAvg,
+      healingPerPc,
     };
   }
 
@@ -2208,6 +2230,7 @@
 
     const dprMult = clamp(safeFloat(mult, 1), 0, 20);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
+    const healingPerPc = partyHealingPerPc(state, party.length);
     const spread = Math.max(1, safeInt(state.spread_targets, 1));
     const rounds = Math.max(1, safeFloat(horizonRounds, 5));
     const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
@@ -2221,7 +2244,7 @@
       const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, rounds);
       const minionDpr = minionDprVsPc(pc);
       const rawIncoming = (attackDpr + legendaryDpr) / spread + phaseDpr + minionDpr + lairRechDpr;
-      const net = Math.max(0, rawIncoming * dprMult - thpAvg);
+      const net = Math.max(0, rawIncoming * dprMult - thpAvg - healingPerPc);
       if (net <= 0) return Infinity;
       const ttd = pcHp / net;
       if (Number.isFinite(ttd)) {
@@ -2627,6 +2650,16 @@
     } else {
       setText(els.pacingPartyWipe, "∞");
       applyMetricClass(els.pacingPartyWipe, "success");
+    }
+    if (els.pacingPartyWipeSub) {
+      const totalHealing = Math.max(0, safeFloat(state.party_healing_per_round, 0));
+      const unassisted = r.unassistedLastDownRound;
+      setText(
+        els.pacingPartyWipeSub,
+        totalHealing > 0 && unassisted != null
+          ? `with healing · ${fmt1(unassisted)}R unassisted`
+          : "deterministic round · no healing"
+      );
     }
 
     const bossDprMult = Number.isFinite(r.bossDprMult) ? r.bossDprMult : 1;
@@ -3967,6 +4000,7 @@
     base.mode_select = ["normal", "adv", "dis"].includes(String(base.mode_select)) ? String(base.mode_select) : "normal";
     base.spread_targets = Math.max(1, safeInt(base.spread_targets, 1));
     base.thp_expr = String(base.thp_expr || "0");
+    base.party_healing_per_round = Math.max(0, safeFloat(base.party_healing_per_round, 0));
 
     base.lair_enabled = Boolean(base.lair_enabled);
     base.lair_avg = Math.max(0, safeFloat(base.lair_avg, 6.0));
@@ -4264,6 +4298,17 @@
   function safeFloat(x, defaultValue = 0) {
     const n = Number.parseFloat(String(x));
     return Number.isFinite(n) ? n : defaultValue;
+  }
+
+  function activePartySize(source = state) {
+    const rows = source && Array.isArray(source.party_table) ? source.party_table : [];
+    const active = rows.filter((row) => String((row && row.Name) || "").trim().length > 0).length;
+    return Math.max(1, active);
+  }
+
+  function partyHealingPerPc(source = state, partySize = activePartySize(source)) {
+    const partyTotal = Math.max(0, safeFloat(source && source.party_healing_per_round, 0));
+    return partyTotal / Math.max(1, safeInt(partySize, 1));
   }
 
   function clamp(v, lo, hi) {
