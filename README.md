@@ -76,7 +76,7 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle.
 
-Tune Everything: set target rounds, kill-rate target, and TPK cap. The tuner proposes deterministic pacing, then searches HP and pressure against Monte Carlo trials.
+Tune Everything treats durability and lethality as separate budgets: boss HP is set from party DPR for the target fight length, while boss damage is scaled for party collapse 2–3 rounds later. Kill-rate and encounter-TPK settings are warnings; they never drive boss HP downward.
 
 Outcome Summary + Survival Curve + TTK Distribution.
 
@@ -158,7 +158,7 @@ Want fewer slogs? Lower boss HP/resist slightly, add lair/recharge that closes f
 
 Check lethality: P(â‰¥2 PCs down) near your taste (say ~20%); TPK â‰¤ 5%.
 
-Auto-Tune HP to lock the median; iterate DPR and riders to shape the tails.
+Tune Everything to set the boss's DPR-based HP budget and the party-collapse pressure target; iterate mechanics only if the Monte Carlo tails remain too wide.
 
 Re-run until guardrails show âœ“.
 
@@ -172,14 +172,14 @@ Re-run until guardrails show âœ“.
   2. **Boss Kit** tab: add the bossâ€™s attacks (to-hit/DC, damage, save targets, uses/round, melee?), plus **lair**, **recharge**, and any **on-hit rider**.
   3. **âš”ï¸ Encounter MC** tab: set **Trials** (10â€“30k), **Max Rounds** (~12), **Initiative** (random), and the **Party DPR CV** (variance, default 0.60).
   4. Click **Run Encounter Simulation**. Read **Median TTK**, **p10â€“p90**, **TPK%**, and **PCs down**.
-  5. If pacingâ€™s off, hit **Auto-Tune HP** to land on your target **median** rounds.
+  5. If pacing is off, hit **Tune Everything** to set boss HP for the target duration and outgoing pressure for collapse 2–3 rounds later.
 
 ---
 
 ## Features
 
 - **Encounter Monte Carlo:** full fights, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, per-target THP/round, expected party healing, regen/resistance, PCs dropping.
-- **Tune Everything:** proposes boss durability and pressure deterministically, then searches for the highest HP that meets the configured kill-rate target and TPK cap. Band width is reported as a warning.
+- **Tune Everything:** sets boss HP from target rounds × effective party DPR and independently scales outgoing damage for a party collapse 2–3 rounds later. Four Legendary Resistances can cap exceptional pre-target burst rounds; kill rate, encounter TPK, and band width are warnings rather than HP inputs.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)
   - `P(TTK â‰¥ slow) â‰¤ cap` (avoid slogs)

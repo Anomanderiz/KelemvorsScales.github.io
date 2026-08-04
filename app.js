@@ -89,8 +89,8 @@
 
     pacing_rounds: 10,
     tight_pacing_enabled: true,
-    tight_cap_pct: 0.24,
-    tight_cap_resources: 3,
+    tight_cap_pct: 0.25,
+    tight_cap_resources: 4,
     tight_anti_slog_mult: 1.35,
 
     minion_count: 0,
@@ -1447,156 +1447,117 @@
     const originalMult = bossDprMultiplier(state);
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
     const targetRound = bossTuneTargetRounds();
+    const collapseTarget = targetPartyWipeRound(targetRound);
     const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
     const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
-    const quickTrials = clamp(Math.round(originalTrials * 0.3), 1500, 4000);
     const changes = [];
-    const runner = createEncounterWorkerRunner();
-
-    try {
-      state.pacing_rounds = targetRound;
-      state.tune_target_median = targetRound;
-      const minionTune = tuneMinionsForBossMode(targetRound);
-      if (minionTune.error) {
-        alert(minionTune.error);
-        setStatus("Auto-tune aborted: minions cannot be paced.", 4200);
-        return;
-      }
-      changes.push(...minionTune.changes);
-      const legendaryTune = tuneLegendaryActionsForBossMode();
-      changes.push(...legendaryTune.changes);
-      let pacingResult = computePacingResult();
-
-      if (!Number.isFinite(pacingResult.recommendedBossHp) || pacingResult.recommendedBossHp <= 0) {
-        alert("Auto-tune could not find a boss HP target. Check party DPR, boss resistance/regen, and replenishing minions.");
-        setStatus("Auto-tune failed: no valid boss HP target.", 4200);
-        return;
-      }
-
-      const pacingHp = Math.max(1, Math.round(pacingResult.recommendedBossHp));
-      const pacingMult = Number.isFinite(pacingResult.targetBossDprMult)
-        ? round2(clamp(pacingResult.targetBossDprMult, 0, 20))
-        : round2(clamp(originalMult, 0, 20));
-      let tunedHp = pacingHp;
-      let residualMult = 1;
-
-      state.pacing_rounds = targetRound;
-      state.tune_target_median = targetRound;
-      state.boss_hp = tunedHp;
-      state.boss_dpr_mult = pacingMult;
-      state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), targetRound + 3);
-      state.enc_trials = originalTrials;
-      state.tight_pacing_enabled = true;
-      state.tight_cap_pct = round2(1 / BOSS_TUNE_MIN_ROUNDS);
-      state.tight_cap_resources = 6;
-      state.tight_anti_slog_mult = 2.0;
-
-      if (Math.abs(pacingMult - originalMult) > 0.01) {
-        changes.push(`Boss DPR pacing scale: ${originalMult.toFixed(2)}x -> ${pacingMult.toFixed(2)}x`);
-      }
-      // Convert to the deliberately low-variance final formulas before Monte
-      // Carlo tuning so the search validates the stat block it will keep.
-      changes.push(...bakeTunedDamageIntoStatBlock());
-
-      const evaluate = async (hp, mult) => {
-        const metrics = await runner.run({
-          boss_hp: Math.max(1, Math.round(hp)),
-          boss_dpr_mult: clamp(mult, 0, 20),
-          enc_trials: quickTrials,
-        });
-        if (!metrics || metrics.error) return null;
-        const killByTarget = metrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, metrics.ttk.length);
-        return { tpk: metrics.tpkProb, killByTarget };
-      };
-
-      // First retain as much deterministic pressure as possible while honoring
-      // the configured TPK cap at the pacing HP target.
-      let pressureCheck = await evaluate(tunedHp, residualMult);
-      if (pressureCheck && pressureCheck.tpk > tpkCap + 0.002) {
-        let lo = 0;
-        let hi = 1;
-        for (let i = 0; i < 11; i += 1) {
-          const mid = (lo + hi) / 2;
-          const result = await evaluate(tunedHp, mid);
-          if (result && result.tpk <= tpkCap) lo = mid;
-          else hi = mid;
-        }
-        residualMult = round2(lo);
-      }
-
-      // Then choose the highest HP that still meets both the requested kill
-      // rate by the target round and the TPK cap.
-      const feasibleHp = async (hp) => {
-        const result = await evaluate(hp, residualMult);
-        return result && result.killByTarget >= killRateTarget && result.tpk <= tpkCap + 0.005;
-      };
-      let hpLo = 1;
-      let hpHi = Math.max(2, pacingHp * 2);
-      while (await feasibleHp(hpHi)) {
-        hpLo = hpHi;
-        hpHi *= 2;
-        if (hpHi > Math.max(1000000, pacingHp * 32)) break;
-      }
-      for (let i = 0; i < 12 && hpHi - hpLo > 1; i += 1) {
-        const mid = Math.floor((hpLo + hpHi + 1) / 2);
-        if (await feasibleHp(mid)) hpLo = mid;
-        else hpHi = mid - 1;
-      }
-      tunedHp = Math.max(1, Math.round(hpLo));
-      state.boss_hp = tunedHp;
-      state.boss_dpr_mult = residualMult;
-
-      if (tunedHp !== originalHp) changes.push(`Boss HP: ${originalHp} -> ${tunedHp} (kill-rate/TPK constraints)`);
-      if (residualMult < 0.995) {
-        changes.push(`Post-conversion pressure: 1.00x -> ${residualMult.toFixed(2)}x (TPK cap)`);
-        changes.push(...bakeTunedDamageIntoStatBlock());
-      }
-      state = normalizeState(state);
-      syncControlsFromState();
-      persistState();
-      renderAttackSection();
-      renderLegendarySection();
-      renderPhaseSection();
-      refreshEffTableFromMode();
-      refreshReport();
-
-      const finalMetrics = await runEncounterAndRender();
-      if (!finalMetrics || finalMetrics.error) {
-        setStatus("Auto-tune applied values, but final simulation failed.", 4200);
-        return;
-      }
-
-      const finiteTtk = finalMetrics.ttk.filter((v) => Number.isFinite(v));
-      const finalMed = finiteTtk.length ? percentile(finiteTtk, 50) : Infinity;
-      const finalP10 = finiteTtk.length ? percentile(finiteTtk, 10) : Infinity;
-      const finalP90 = finiteTtk.length ? percentile(finiteTtk, 90) : Infinity;
-      const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
-      const finalTpk = finalMetrics.tpkProb;
-      const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
-      const finalProjectedWipe = projectedPartyWipeRound(state.boss_dpr_mult, targetRound);
-      const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at pacing targets";
-      const tpkLine = `TPK ${(100 * finalTpk).toFixed(1)}% (cap ${(100 * tpkCap).toFixed(1)}%)`;
-      const bandLine = finalBand > bandTarget + 0.5
-        ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; damage variance is too high for tighter pacing without changing mechanics.`
-        : "";
-      const tpkAdvice = finalTpk > tpkCap + 0.005
-        ? `\n\nFinal TPK exceeds the configured cap after formula rounding; rerun tuning or soften burst/minion damage.`
-        : "";
-
-      alert(
-        `Auto-tune complete:\n${lines}\n\n` +
-        `Target: ${targetRound}R | Median: ${Number.isFinite(finalMed) ? finalMed.toFixed(1) : "inf"}R | ` +
-        `p10-p90: ${Number.isFinite(finalP10) ? finalP10.toFixed(1) : "inf"}-${Number.isFinite(finalP90) ? finalP90.toFixed(1) : "inf"}R\n` +
-        `${tpkLine} | Projected party wipe: ${Number.isFinite(finalProjectedWipe) ? finalProjectedWipe.toFixed(1) : "inf"}R | Kill by target: ${(100 * finalKillByTarget).toFixed(1)}%` +
-        bandLine +
-        tpkAdvice +
-        tightPacingAdviceText()
-      );
-      setStatus(`Auto-tune complete. HP=${state.boss_hp}, DPR=${state.boss_dpr_mult.toFixed(2)}x.`, 5000);
-    } finally {
-      runner.close();
+    state.pacing_rounds = targetRound;
+    state.tune_target_median = targetRound;
+    const minionTune = tuneMinionsForBossMode(targetRound);
+    if (minionTune.error) {
+      alert(minionTune.error);
+      setStatus("Auto-tune aborted: minions cannot be paced.", 4200);
+      return;
     }
+    changes.push(...minionTune.changes);
+    const legendaryTune = tuneLegendaryActionsForBossMode();
+    changes.push(...legendaryTune.changes);
+    const pacingResult = computePacingResult();
+
+    if (!Number.isFinite(pacingResult.recommendedBossHp) || pacingResult.recommendedBossHp <= 0) {
+      alert("Auto-tune could not find a boss HP target. Check party DPR, boss resistance/regen, and replenishing minions.");
+      setStatus("Auto-tune failed: no valid boss HP target.", 4200);
+      return;
+    }
+    if (!Number.isFinite(pacingResult.targetBossDprMult) || pacingResult.targetBossDprMult <= 0) {
+      alert("Auto-tune could not set party-collapse pressure because the enabled boss kit deals no expected damage.");
+      setStatus("Auto-tune failed: no boss pressure to scale.", 4200);
+      return;
+    }
+
+    // Durability and lethality are deliberately independent. Boss HP is the
+    // party's expected damage budget for the target fight length; it must not
+    // be reduced to satisfy a TPK or kill-rate constraint.
+    const tunedHp = Math.max(1, Math.round(pacingResult.recommendedBossHp));
+    const pacingMult = round2(clamp(pacingResult.targetBossDprMult, 0, 20));
+    state.boss_hp = tunedHp;
+    state.boss_dpr_mult = pacingMult;
+    state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), Math.ceil(collapseTarget));
+    state.enc_trials = originalTrials;
+
+    // Four Legendary Resistances are the only early-burst pacing gate. Base HP
+    // still carries the expected ten-round damage budget; there is no hard
+    // minimum-round floor and no search path that can replace it with 1 HP.
+    state.tight_pacing_enabled = true;
+    state.tight_cap_pct = 0.25;
+    state.tight_cap_resources = 4;
+    state.tight_anti_slog_mult = 2.0;
+
+    if (tunedHp !== originalHp) {
+      changes.push(`Boss HP: ${originalHp} -> ${tunedHp} (${targetRound}-round party-DPR budget)`);
+    }
+    if (Math.abs(pacingMult - originalMult) > 0.01) {
+      changes.push(`Boss pressure scale: ${originalMult.toFixed(2)}x -> ${pacingMult.toFixed(2)}x (${collapseTarget.toFixed(1)}-round collapse target)`);
+    }
+
+    // Bake the pressure target into the actual stat block. A correction pass
+    // compensates for integer/static-formula rounding while leaving HP alone.
+    changes.push(...bakeTunedDamageIntoStatBlock());
+    const roundedPressure = computePacingResult();
+    const correction = roundedPressure.targetBossDprMult;
+    if (Number.isFinite(correction) && correction > 0 && Math.abs(correction - 1) > 0.01) {
+      state.boss_dpr_mult = round2(clamp(correction, 0, 20));
+      changes.push(...bakeTunedDamageIntoStatBlock());
+    }
+    state.boss_hp = tunedHp;
+    state = normalizeState(state);
+    syncControlsFromState();
+    persistState();
+    renderAttackSection();
+    renderLegendarySection();
+    renderPhaseSection();
+    refreshEffTableFromMode();
+    refreshReport();
+
+    const finalMetrics = await runEncounterAndRender();
+    if (!finalMetrics || finalMetrics.error) {
+      setStatus("Auto-tune applied values, but final simulation failed.", 4200);
+      return;
+    }
+
+    const finiteTtk = finalMetrics.ttk.filter((v) => Number.isFinite(v));
+    const finalMed = finiteTtk.length ? percentile(finiteTtk, 50) : Infinity;
+    const finalP10 = finiteTtk.length ? percentile(finiteTtk, 10) : Infinity;
+    const finalP90 = finiteTtk.length ? percentile(finiteTtk, 90) : Infinity;
+    const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
+    const finalTpk = finalMetrics.tpkProb;
+    const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
+    const finalProjectedWipe = projectedPartyWipeRound(1, targetRound);
+    const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at pacing targets";
+    const tpkLine = `Encounter TPK ${(100 * finalTpk).toFixed(1)}% (warning cap ${(100 * tpkCap).toFixed(1)}%)`;
+    const bandLine = finalBand > bandTarget + 0.5
+      ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; party damage variance is wider than requested.`
+      : "";
+    const killRateLine = finalKillByTarget + 0.02 < killRateTarget
+      ? `\nKill by round ${targetRound}: ${(100 * finalKillByTarget).toFixed(1)}% (warning target ${(100 * killRateTarget).toFixed(0)}%)`
+      : `\nKill by round ${targetRound}: ${(100 * finalKillByTarget).toFixed(1)}%`;
+    const tpkAdvice = finalTpk > tpkCap + 0.005
+      ? `\nEncounter TPK exceeds the warning cap, but Tune Everything preserved the ${targetRound}-round HP and ${formatRoundWindow(targetPartyWipeMinRound(targetRound), targetPartyWipeMaxRound(targetRound))} collapse targets instead of lowering boss HP.`
+      : "";
+
+    alert(
+      `Auto-tune complete:\n${lines}\n\n` +
+      `Boss target: ${targetRound}R | Median: ${Number.isFinite(finalMed) ? finalMed.toFixed(1) : "inf"}R | ` +
+      `p10-p90: ${Number.isFinite(finalP10) ? finalP10.toFixed(1) : "inf"}-${Number.isFinite(finalP90) ? finalP90.toFixed(1) : "inf"}R\n` +
+      `Party collapse target: ${formatRoundWindow(targetPartyWipeMinRound(targetRound), targetPartyWipeMaxRound(targetRound))} | ` +
+      `Projected: ${Number.isFinite(finalProjectedWipe) ? finalProjectedWipe.toFixed(1) : "inf"}R | ${tpkLine}` +
+      killRateLine +
+      bandLine +
+      tpkAdvice +
+      tightPacingAdviceText()
+    );
+    setStatus(`Auto-tune complete. HP=${state.boss_hp}; projected collapse=${Number.isFinite(finalProjectedWipe) ? finalProjectedWipe.toFixed(1) : "inf"}R.`, 5000);
   }
 
   function runMcSim(pcRow, attacks, opts) {
@@ -1772,9 +1733,8 @@
     const bossMaxHp = Math.max(1, safeFloat(opts.boss_hp, 150));
     const tightPacing = Boolean(opts.tight_pacing_enabled);
     const tightTargetRound = targetEncounterRounds(opts);
-    const tightMinRound = Math.min(BOSS_TUNE_MIN_ROUNDS, tightTargetRound);
-    const tightCapPct = clamp(safeFloat(opts.tight_cap_pct, 0.24), 0.10, 0.40);
-    const tightCapResources = Math.max(0, safeInt(opts.tight_cap_resources, 3));
+    const tightCapPct = clamp(safeFloat(opts.tight_cap_pct, 0.25), 0.10, 0.40);
+    const tightCapResources = Math.max(0, safeInt(opts.tight_cap_resources, 4));
     const tightAntiSlogMult = clamp(safeFloat(opts.tight_anti_slog_mult, 1.35), 1.0, 2.5);
 
     const effList = effPartyDprs(useNova);
@@ -1871,9 +1831,6 @@
         }
         bossDamageThisRound[t] += bossDamage;
         bossHp[t] -= bossDamage;
-        if (tightPacing && roundNumber < tightMinRound && bossHp[t] <= 0) {
-          bossHp[t] = 1;
-        }
       }
 
       if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
@@ -2796,22 +2753,20 @@
 
   function tightPacingAdviceHtml() {
     if (!state.tight_pacing_enabled) return "";
-    const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
-    const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
+    const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.25), 0.10, 0.40) * 100);
+    const resources = Math.max(0, safeInt(state.tight_cap_resources, 4));
     const target = targetEncounterRounds();
-    const minRound = Math.min(BOSS_TUNE_MIN_ROUNDS, target);
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `<div class="pacing-advice"><strong>Boss phase gate:</strong> The boss cannot drop before round ${minRound}. Before round ${target}, it can burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round. Protection ends at round ${target}; damage after that round escalates by ${antiSlog.toFixed(2)}x per round until the boss falls.</div>`;
+    return `<div class="pacing-advice"><strong>Legendary Resistance HP pacing:</strong> Before round ${target}, the boss can burn one of ${resources} Legendary Resistances whenever a party round would remove more than ${capPct}% of max HP, capping that round at ${capPct}%. There is no hard HP floor. Protection ends at round ${target}; damage after that round escalates by ${antiSlog.toFixed(2)}x per round until the boss falls.</div>`;
   }
 
   function tightPacingAdviceText() {
     if (!state.tight_pacing_enabled) return "";
-    const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.24), 0.10, 0.40) * 100);
-    const resources = Math.max(0, safeInt(state.tight_cap_resources, 3));
+    const capPct = Math.round(clamp(safeFloat(state.tight_cap_pct, 0.25), 0.10, 0.40) * 100);
+    const resources = Math.max(0, safeInt(state.tight_cap_resources, 4));
     const target = targetEncounterRounds();
-    const minRound = Math.min(BOSS_TUNE_MIN_ROUNDS, target);
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `\n\nTable rule required for these numbers:\n- The boss cannot drop before round ${minRound}; hold it at 1 HP or transition phases if needed.\n- Before round ${target}, the boss may burn ${resources} pacing resource(s) to prevent HP loss beyond ${capPct}% max HP in a round.\n- Protection ends at round ${target}. If the fight runs long, multiply post-target damage by ${antiSlog.toFixed(2)}x per round.\n- These gates limit early burst without predetermining the exact kill round.`;
+    return `\n\nLegendary Resistance HP pacing:\n- Before round ${target}, the boss has ${resources} Legendary Resistances available for HP pacing.\n- When a party round would remove more than ${capPct}% of max HP, it may burn one to cap that round's loss at ${capPct}%.\n- There is no hard minimum-round or 1 HP floor; the tuned HP carries the normal ${target}-round damage budget.\n- Protection ends at round ${target}. If the fight runs long, multiply post-target damage by ${antiSlog.toFixed(2)}x per round.`;
   }
 
   function fmt1(n) {
@@ -4200,8 +4155,8 @@
     base.tight_pacing_enabled = Object.prototype.hasOwnProperty.call(src, "tight_pacing_enabled")
       ? Boolean(base.tight_pacing_enabled)
       : true;
-    base.tight_cap_pct = clamp(safeFloat(base.tight_cap_pct, 0.24), 0.10, 0.40);
-    base.tight_cap_resources = clamp(safeInt(base.tight_cap_resources, 3), 0, 6);
+    base.tight_cap_pct = clamp(safeFloat(base.tight_cap_pct, 0.25), 0.10, 0.40);
+    base.tight_cap_resources = clamp(safeInt(base.tight_cap_resources, 4), 0, 4);
     base.tight_anti_slog_mult = clamp(safeFloat(base.tight_anti_slog_mult, 1.35), 1.0, 2.5);
 
     base.minion_count     = Math.max(0, safeInt(base.minion_count, 0));
