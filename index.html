@@ -290,7 +290,7 @@
 
         <div class="card">
           <h2>Minion Pack</h2>
-          <p class="hint">Party focuses minions before the boss (focus-fire model). Configure the pack to see how minion HP absorption extends boss TTD round by round. Minion average DPR is set in Boss Kit.</p>
+          <p class="hint">Clear First spends attacks on the pack before damaging the boss. Boss Blitz bypasses minion HP, but leaves the full pack attacking until the boss falls. Minion average DPR is set in Boss Kit.</p>
           <div class="form-grid">
             <label>Minion Count
               <input id="optMinionCount" type="number" min="0" max="99" step="1">
@@ -310,8 +310,8 @@
         </div>
 
         <div class="card" id="minionTtdCard" style="display:none">
-          <h2>Minion Phase — Round by Round</h2>
-          <p class="hint">Party focuses minions; overflow DPR spills to boss when minions die mid-round.</p>
+          <h2>Clear-First Minion Phase — Round by Round</h2>
+          <p class="hint">This table shows the intended Clear-First path; overflow DPR spills to the boss when minions die mid-round.</p>
           <div id="minionTtdTable" class="table-mount"></div>
         </div>
       </section>
@@ -359,8 +359,8 @@
             <h2>Encounter Balancer</h2>
           </div>
           <p class="hint">
-            Deterministic pacing proposes boss HP and DPR. Tune Everything then uses Monte Carlo
-            to enforce kill-rate and TPK targets; band width remains a variability warning.
+            Clear First is the intended pacing baseline. Full Analysis also stress-tests Boss Blitz,
+            where the party ignores minions and leaves their full offense active until the boss falls.
           </p>
           <div class="form-grid">
             <label>Target Encounter Rounds
@@ -441,6 +441,7 @@
             <div id="lblTpk" class="stat"></div>
             <div id="lblDowns" class="stat"></div>
           </div>
+          <div id="strategyComparisonTable" class="table-mount"></div>
         </div>
 
         <div class="split split-charts">

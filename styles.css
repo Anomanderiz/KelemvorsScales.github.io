@@ -808,6 +808,8 @@ td select {
 .pacing-balance.bal-hard { border-left-color: var(--danger); }
 .pacing-balance.bal-easy { border-left-color: var(--parchment); }
 
+#strategyComparisonTable { margin-top: 1rem; }
+
 .pacing-advice {
   margin-top: 10px;
   padding-top: 10px;

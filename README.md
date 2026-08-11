@@ -66,7 +66,7 @@ Fast, average-based snapshot of boss damage versus each PC.
 
 ## â³ Boss TTD
 
-Computes time to boss defeat from total incoming effective DPR, resistance, and regen.
+Computes time to boss defeat from total incoming effective DPR, resistance, and regen. With minions configured it shows both **Clear First** (minion HP absorbs party actions) and **Boss Blitz** (all party damage goes to the boss while the full pack keeps attacking).
 
 ## ðŸŽ¯ Bossâ†’PC MC
 
@@ -74,9 +74,9 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 ## âš”ï¸ Encounter MC
 
-Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle.
+Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle. Every analysis runs Clear First and Boss Blitz side by side, including separate survival curves, TTK distributions, casualty timing, and TPK risk.
 
-Tune Everything treats durability and lethality as separate budgets: boss HP is set from party DPR for the target fight length, while boss damage is scaled for party collapse 2–3 rounds later. Kill-rate and encounter-TPK settings are warnings; they never drive boss HP downward.
+Tune Everything treats durability and lethality as separate budgets: boss HP is set from Clear-First party DPR for the target fight length, while boss damage is scaled for party collapse 2–3 rounds later. Minion offense is tuned separately so Boss Blitz has at least a 50% chance to drop a PC by round 6, unless that would push Clear First above the configured TPK warning cap.
 
 Outcome Summary + Survival Curve + TTK Distribution.
 
@@ -144,7 +144,7 @@ Initiative: if the boss acts first, PCs might lose actions that round if they dr
 
 Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. THP is per target, while expected healing is entered as a party total and divided evenly across active PCs.
 
-Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules.
+Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules. Clear First reduces the number of acting minions as the pack takes damage; Boss Blitz leaves the full configured count active until the boss dies.
 
 Balancing playbook
 
@@ -158,7 +158,7 @@ Want fewer slogs? Lower boss HP/resist slightly, add lair/recharge that closes f
 
 Check lethality: P(â‰¥2 PCs down) near your taste (say ~20%); TPK â‰¤ 5%.
 
-Tune Everything to set the boss's DPR-based HP budget and the party-collapse pressure target; iterate mechanics only if the Monte Carlo tails remain too wide.
+Tune Everything to set the Clear-First HP and party-collapse budgets, then calibrate ignored-minion pressure against the round-6 first-casualty target.
 
 Re-run until guardrails show âœ“.
 
@@ -178,8 +178,8 @@ Re-run until guardrails show âœ“.
 
 ## Features
 
-- **Encounter Monte Carlo:** full fights, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, per-target THP/round, expected party healing, regen/resistance, PCs dropping.
-- **Tune Everything:** sets boss HP from target rounds × effective party DPR and independently scales outgoing damage for a party collapse 2–3 rounds later. Four Legendary Resistances can cap exceptional pre-target burst rounds; kill rate, encounter TPK, and band width are warnings rather than HP inputs.
+- **Encounter Monte Carlo:** full fights under both Clear First and Boss Blitz, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, minions, per-target THP/round, expected party healing, regen/resistance, and PCs dropping.
+- **Tune Everything:** sets boss HP from the Clear-First target-round budget, scales boss pressure for party collapse 2–3 rounds later, and independently tunes minion offense to punish Boss Blitz by round 6 without exceeding the Clear-First TPK warning cap. Four Legendary Resistances can cap exceptional pre-target burst rounds; kill rate and band width remain warnings rather than HP inputs.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)
   - `P(TTK â‰¥ slow) â‰¤ cap` (avoid slogs)
