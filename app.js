@@ -1144,77 +1144,60 @@
     renderStrategyComparison(clearSummary, blitzSummary);
     renderTacticalVerdict(pacing, clearSummary, blitzSummary);
 
-    els.lblTtkMedian.textContent = `Clear First median TTK: ${formatRoundMetric(clearSummary.medianTtk)} (${formatPercent(clearSummary.killRate)} kill rate)`;
-    els.lblTtkP1090.textContent = `Boss Blitz median TTK: ${formatRoundMetric(blitzSummary.medianTtk)} (${formatPercent(blitzSummary.killRate)} kill rate)`;
-    els.lblTpk.textContent = `TPK: Clear ${formatPercent(clearSummary.tpkProb)} · Blitz ${formatPercent(blitzSummary.tpkProb)}`;
-    els.lblDowns.textContent = `Blitz first PC down by R${BLITZ_DANGER_ROUND}: ${formatPercent(blitzSummary.firstDownByDangerRound)}`;
+    els.lblTtkMedian.textContent = formatOutcomeMix("Clear First", clearSummary, state.enc_max_rounds);
+    els.lblTtkP1090.textContent = formatOutcomeMix("Boss Blitz", blitzSummary, state.enc_max_rounds);
+    els.lblTpk.textContent = formatStrategyTradeoff(clearSummary, blitzSummary);
+    els.lblDowns.textContent = monteCarloRecommendation(clearSummary, blitzSummary, pacing.targetRounds);
 
+    const cumulativeRate = (rounds, total) => {
+      const sorted = rounds.filter(Number.isFinite).sort((a, b) => a - b);
+      let resolved = 0;
+      return clearFirst.times.map((round) => {
+        while (resolved < sorted.length && sorted[resolved] <= round) resolved += 1;
+        return resolved / Math.max(1, total);
+      });
+    };
     drawChart("surv", els.survChart, {
       type: "line",
       data: {
         labels: clearFirst.times,
         datasets: [
-          {
-            label: "Clear First: boss survives",
-            data: clearFirst.survivalCurve,
-            stepped: "before",
-            borderColor: "rgba(191,26,47,1)",
-            backgroundColor: "rgba(191,26,47,0.12)",
-            borderWidth: 2,
-            fill: false,
-            pointRadius: 0,
-            tension: 0,
-          },
-          {
-            label: "Boss Blitz: boss survives",
-            data: bossBlitz.survivalCurve,
-            stepped: "before",
-            borderColor: "rgba(200,152,40,1)",
-            backgroundColor: "rgba(200,152,40,0.12)",
-            borderWidth: 2,
-            fill: false,
-            pointRadius: 0,
-            tension: 0,
-          },
+          { label: "Clear First victories", data: cumulativeRate(clearFirst.ttk, clearFirst.ttk.length), stepped: "after", borderColor: "rgba(191,26,47,1)", borderWidth: 2, pointRadius: 0 },
+          { label: "Clear First wipes", data: cumulativeRate(clearFirst.tpkRound, clearFirst.ttk.length), stepped: "after", borderColor: "rgba(232,16,42,0.65)", borderDash: [6, 4], borderWidth: 2, pointRadius: 0 },
+          { label: "Boss Blitz victories", data: cumulativeRate(bossBlitz.ttk, bossBlitz.ttk.length), stepped: "after", borderColor: "rgba(200,152,40,1)", borderWidth: 2, pointRadius: 0 },
+          { label: "Boss Blitz wipes", data: cumulativeRate(bossBlitz.tpkRound, bossBlitz.ttk.length), stepped: "after", borderColor: "rgba(240,190,70,0.65)", borderDash: [6, 4], borderWidth: 2, pointRadius: 0 },
         ],
       },
       options: baseChartOptions({
-        plugins: { title: { display: true, text: "Boss Survival by Party Strategy" } },
+        plugins: { title: { display: true, text: "Cumulative Encounter Outcomes" } },
         scales: {
           y: {
             min: 0, max: 1,
-            title: { display: true, text: "Probability", color: "#aa9080" },
+            title: { display: true, text: "Trials resolved", color: "#aa9080" },
             ticks: { callback: (v) => `${(v * 100).toFixed(0)}%` },
           },
-          x: { title: { display: true, text: "Rounds", color: "#aa9080" }, ticks: { maxTicksLimit: 13 } },
-        },
-      }),
-    });
-
-    const roundLabels = Array.from({ length: state.enc_max_rounds }, (_, i) => i + 1);
-    const countTtkByRound = (metrics) => roundLabels.map((round) => metrics.ttk.filter((value) => value === round).length);
-    drawChart("ttk", els.ttkChart, {
-      type: "bar",
-      data: {
-        labels: roundLabels,
-        datasets: [
-          { label: "Clear First", data: countTtkByRound(clearFirst), backgroundColor: "rgba(191,26,47,0.70)" },
-          { label: "Boss Blitz", data: countTtkByRound(bossBlitz), backgroundColor: "rgba(200,152,40,0.70)" },
-        ],
-      },
-      options: baseChartOptions({
-        plugins: { title: { display: true, text: "TTK Distribution by Party Strategy" } },
-        scales: {
-          y: { beginAtZero: true, title: { display: true, text: "Frequency", color: "#aa9080" } },
           x: { title: { display: true, text: "Round", color: "#aa9080" }, ticks: { maxTicksLimit: 13 } },
         },
       }),
     });
 
-    const noKills = !clearFirst.finiteTtk.length && !bossBlitz.finiteTtk.length;
-    if (noKills) {
-      alert("The boss never died under either strategy within Max Rounds. Increase Max Rounds or lower boss durability.");
-    }
+    drawChart("ttk", els.ttkChart, {
+      type: "bar",
+      data: {
+        labels: ["Party victory", "Party wipe", `Still fighting at R${state.enc_max_rounds}`],
+        datasets: [
+          { label: "Clear First", data: [clearSummary.victoryRate, clearSummary.tpkProb, clearSummary.unresolvedRate], backgroundColor: "rgba(191,26,47,0.70)" },
+          { label: "Boss Blitz", data: [blitzSummary.victoryRate, blitzSummary.tpkProb, blitzSummary.unresolvedRate], backgroundColor: "rgba(200,152,40,0.70)" },
+        ],
+      },
+      options: baseChartOptions({
+        plugins: { title: { display: true, text: "Final Outcome Mix" } },
+        scales: {
+          y: { min: 0, max: 1, title: { display: true, text: "Trials", color: "#aa9080" }, ticks: { callback: (v) => `${(v * 100).toFixed(0)}%` } },
+          x: { ticks: { maxTicksLimit: 3 } },
+        },
+      }),
+    });
     setStatus(`Encounter strategy comparison complete. Trials=${state.enc_trials} per strategy.`, 3800);
     return { clearFirst, bossBlitz, clearSummary, blitzSummary };
   }
@@ -1222,18 +1205,31 @@
   function summarizeEncounterStrategy(metrics, targetRound) {
     const finiteTtk = metrics.finiteTtk || metrics.ttk.filter((value) => Number.isFinite(value));
     const finiteFirstDown = (metrics.firstDownRound || []).filter((value) => Number.isFinite(value));
+    const total = Math.max(1, metrics.ttk.length);
+    const tpkFlags = metrics.tpkFlags || metrics.ttk.map(() => false);
+    const finiteWipeRounds = (metrics.tpkRound || []).filter((value) => Number.isFinite(value));
+    const failureBossHp = (metrics.bossHpRemainingPct || []).filter((_, index) => !Number.isFinite(metrics.ttk[index]));
+    const victoryRate = finiteTtk.length / total;
+    const tpkProb = tpkFlags.filter(Boolean).length / total;
+    const unresolvedRate = clamp(1 - victoryRate - tpkProb, 0, 1);
     return {
       medianTtk: finiteTtk.length ? percentile(finiteTtk, 50) : Infinity,
       p10: finiteTtk.length ? percentile(finiteTtk, 10) : Infinity,
       p90: finiteTtk.length ? percentile(finiteTtk, 90) : Infinity,
-      killRate: finiteTtk.length / Math.max(1, metrics.ttk.length),
-      killByTarget: metrics.ttk.filter((value) => Number.isFinite(value) && value <= targetRound).length / Math.max(1, metrics.ttk.length),
+      victoryRate,
+      killRate: victoryRate,
+      killByTarget: metrics.ttk.filter((value) => Number.isFinite(value) && value <= targetRound).length / total,
       medianFirstDown: empiricalMedianRound(metrics.firstDownRound || []),
       firstDownByDangerRound: Number.isFinite(metrics.firstDownByDangerRound)
         ? metrics.firstDownByDangerRound
-        : finiteFirstDown.filter((value) => value <= BLITZ_DANGER_ROUND).length / Math.max(1, metrics.ttk.length),
-      tpkProb: safeFloat(metrics.tpkProb, 0),
+        : finiteFirstDown.filter((value) => value <= BLITZ_DANGER_ROUND).length / total,
+      tpkProb,
+      unresolvedRate,
+      medianWipeRound: finiteWipeRounds.length ? percentile(finiteWipeRounds, 50) : Infinity,
+      medianBossHpOnFailure: failureBossHp.length ? percentile(failureBossHp, 50) : null,
       meanDowns: metrics.pcsDownAtVictory && metrics.pcsDownAtVictory.length ? meanOf(metrics.pcsDownAtVictory) : 0,
+      hasVictories: finiteTtk.length > 0,
+      hasFailures: failureBossHp.length > 0,
     };
   }
 
@@ -1251,6 +1247,44 @@
     return `${(100 * clamp(safeFloat(value, 0), 0, 1)).toFixed(1)}%`;
   }
 
+  function formatOutcomeMix(label, summary, maxRounds) {
+    return `${label}: ${formatPercent(summary.victoryRate)} wins · ${formatPercent(summary.tpkProb)} wipes · ${formatPercent(summary.unresolvedRate)} still fighting at R${maxRounds}`;
+  }
+
+  function formatStrategyTradeoff(clearSummary, blitzSummary) {
+    const delta = 100 * (blitzSummary.victoryRate - clearSummary.victoryRate);
+    if (Math.abs(delta) < 0.5) {
+      return `Strategy impact: win chance is effectively unchanged (${formatPercent(clearSummary.victoryRate)} vs ${formatPercent(blitzSummary.victoryRate)})`;
+    }
+    const better = delta > 0 ? "Boss Blitz" : "Clear First";
+    return `Best survival chance: ${better} by ${Math.abs(delta).toFixed(1)} percentage points`;
+  }
+
+  function monteCarloRecommendation(clearSummary, blitzSummary, targetRound) {
+    const cap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
+    const requestedWinRate = clamp(safeFloat(state.tune_kill_rate, 0.75), 0, 1);
+    const best = clearSummary.victoryRate >= blitzSummary.victoryRate ? clearSummary : blitzSummary;
+    if (Math.max(clearSummary.victoryRate, blitzSummary.victoryRate) < 0.10) {
+      if (Math.min(clearSummary.tpkProb, blitzSummary.tpkProb) >= 0.50) {
+        return `Action: reduce incoming damage; parties usually wipe around ${formatRoundMetric(best.medianWipeRound)} with ${formatPercent(best.medianBossHpOnFailure || 0)} boss HP remaining.`;
+      }
+      return `Action: reduce boss durability; failed attempts leave about ${formatPercent(best.medianBossHpOnFailure || 0)} boss HP at the round limit.`;
+    }
+    if (clearSummary.tpkProb > cap + 1e-9) {
+      return `Action: lower boss/minion pressure; Clear First wipe risk exceeds the ${formatPercent(cap)} warning cap.`;
+    }
+    if (clearSummary.unresolvedRate > 0.25) {
+      return `Action: reduce boss durability or extend Max Rounds; ${formatPercent(clearSummary.unresolvedRate)} of Clear-First trials remain unresolved.`;
+    }
+    if (clearSummary.killByTarget + 0.02 < requestedWinRate) {
+      return `Action: improve party kill pace; only ${formatPercent(clearSummary.killByTarget)} win by target round ${targetRound}.`;
+    }
+    if (blitzSummary.victoryRate > clearSummary.victoryRate + 0.10 && blitzSummary.firstDownByDangerRound < BLITZ_DANGER_PROBABILITY) {
+      return `Action: strengthen minion offense; Boss Blitz improves win chance without enough round-${BLITZ_DANGER_ROUND} danger.`;
+    }
+    return `Result: the Clear-First baseline is viable and Boss Blitz carries ${formatPercent(blitzSummary.firstDownByDangerRound)} first-casualty risk by round ${BLITZ_DANGER_ROUND}.`;
+  }
+
   function renderStrategyComparison(clearSummary, blitzSummary) {
     if (!els.strategyComparisonTable) return;
     renderResultTable(els.strategyComparisonTable, [
@@ -1262,14 +1296,27 @@
   function strategyComparisonRow(label, summary) {
     return {
       Strategy: label,
-      "Median TTK": formatRoundMetric(summary.medianTtk),
-      "TTK p10-p90": `${formatRoundMetric(summary.p10)}-${formatRoundMetric(summary.p90)}`,
+      "Party wins": formatPercent(summary.victoryRate),
+      "Party wipes": formatPercent(summary.tpkProb),
+      [`Still fighting R${state.enc_max_rounds}`]: formatPercent(summary.unresolvedRate),
+      "Typical resolution": typicalResolutionText(summary),
+      "Victory window": summary.hasVictories ? `${formatRoundMetric(summary.p10)}-${formatRoundMetric(summary.p90)}` : "No victories",
       "Kill by target": formatPercent(summary.killByTarget),
-      "Median first down": formatRoundMetric(summary.medianFirstDown),
+      "Boss HP if no win": summary.hasFailures ? formatPercent(summary.medianBossHpOnFailure) : "—",
       [`First down by R${BLITZ_DANGER_ROUND}`]: formatPercent(summary.firstDownByDangerRound),
-      "TPK": formatPercent(summary.tpkProb),
-      "Mean PCs down": summary.meanDowns.toFixed(2),
+      "PCs down on wins": summary.hasVictories ? summary.meanDowns.toFixed(2) : "—",
     };
+  }
+
+  function typicalResolutionText(summary) {
+    if (summary.victoryRate >= summary.tpkProb && summary.victoryRate >= summary.unresolvedRate) {
+      return `Victory ${formatRoundMetric(summary.medianTtk)}`;
+    }
+    if (summary.tpkProb >= summary.unresolvedRate) {
+      return `Wipe ${formatRoundMetric(summary.medianWipeRound)}`;
+    }
+    const hp = summary.medianBossHpOnFailure == null ? "unknown HP" : `${formatPercent(summary.medianBossHpOnFailure)} boss HP`;
+    return `Still fighting · ${hp}`;
   }
 
   function renderTacticalVerdict(pacing, clearSummary, blitzSummary) {
@@ -1322,7 +1369,7 @@
 
     const finite = metrics.finiteTtk;
     if (!finite.length) {
-      alert("Boss never died within max rounds. Increase max rounds or lower boss durability.");
+      alert("No party victories occurred within Max Rounds. Review wipe risk and remaining boss HP to decide whether to lower incoming damage, reduce boss durability, or extend the round limit.");
       setStatus("Encounter simulation returned no boss defeats.", 2600);
       return metrics;
     }
@@ -1976,6 +2023,7 @@
 
     const ttk = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const firstDownRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
+    const tpkRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const tpkFlags = new Array(trials).fill(false);
     const pcsDownAtVictory = new Array(trials).fill(0);
 
@@ -2058,7 +2106,7 @@
       // Replenishing minions: reset each trial's pool at the top of every round.
       if (minionStrategy === MINION_STRATEGY_CLEAR_FIRST && mcMinionReplenish) {
         for (let t = 0; t < trials; t += 1) {
-          if (!Number.isFinite(ttk[t])) {
+          if (!Number.isFinite(ttk[t]) && !tpkFlags[t]) {
             mcMinionPoolHp[t] = mcMinionCount * mcMinionHpEach;
           }
         }
@@ -2066,7 +2114,7 @@
 
       let anyOngoing = false;
       for (let t = 0; t < trials; t += 1) {
-        if (!Number.isFinite(ttk[t])) {
+        if (!Number.isFinite(ttk[t]) && !tpkFlags[t]) {
           anyOngoing = true;
           break;
         }
@@ -2074,13 +2122,13 @@
       if (!anyOngoing) break;
 
       for (let t = 0; t < trials; t += 1) {
-        if (Number.isFinite(ttk[t])) continue;
+        if (Number.isFinite(ttk[t]) || tpkFlags[t]) continue;
         if (bossFirstFlags[t]) continue;
         applyPartyPhase(t, rnd);
       }
 
       for (let t = 0; t < trials; t += 1) {
-        if (Number.isFinite(ttk[t])) continue;
+        if (Number.isFinite(ttk[t]) || tpkFlags[t]) continue;
 
         // Regeneration occurs on the boss turn, restores previously lost HP,
         // and cannot save a boss already reduced to zero by a party-first turn.
@@ -2130,6 +2178,7 @@
         let aliveNow = aliveIndicesForTrial(pcsAlive[t]);
         if (!aliveNow.length) {
           tpkFlags[t] = true;
+          if (!Number.isFinite(tpkRound[t])) tpkRound[t] = rnd;
           continue;
         }
 
@@ -2262,11 +2311,12 @@
 
         if (aliveIndicesForTrial(pcsAlive[t]).length === 0) {
           tpkFlags[t] = true;
+          if (!Number.isFinite(tpkRound[t])) tpkRound[t] = rnd;
         }
       }
 
       for (let t = 0; t < trials; t += 1) {
-        if (Number.isFinite(ttk[t])) continue;
+        if (Number.isFinite(ttk[t]) || tpkFlags[t]) continue;
         if (!bossFirstFlags[t]) continue;
         applyPartyPhase(t, rnd);
       }
@@ -2291,7 +2341,10 @@
       finiteTtk,
       firstDownRound,
       firstDownByDangerRound: meanOf(firstDownRound.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
+      tpkFlags,
+      tpkRound,
       tpkProb: meanOf(tpkFlags.map((x) => (x ? 1 : 0))),
+      bossHpRemainingPct: bossHp.map((hp) => clamp(hp / bossMaxHp, 0, 1)),
       pcsDownAtVictory: downFinite,
       times,
       survivalCurve,

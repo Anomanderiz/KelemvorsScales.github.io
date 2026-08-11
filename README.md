@@ -78,11 +78,11 @@ Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use
 
 Tune Everything treats durability and lethality as separate budgets: boss HP is set from Clear-First party DPR for the target fight length, while boss damage is scaled for party collapse 2–3 rounds later. Minion offense is tuned separately so Boss Blitz has at least a 50% chance to drop a PC by round 6, unless that would push Clear First above the configured TPK warning cap.
 
-Outcome Summary + Survival Curve + TTK Distribution.
+Outcome summary (victory, wipe, or still fighting), typical resolution rounds, boss HP remaining on failures, cumulative outcome curves, and final outcome mix.
 
 How to read the numbers (plain language)
 
-Median TTK: the â€œtypicalâ€ fight length. Boss-mode tuning defaults to 10 rounds and supports targets from 7â€“10 rounds.
+Victory timing: the median and p10â€“p90 rounds among party victories. Always read it beside the unconditional win/wipe/unresolved rates; rare victories are not presented as the typical encounter outcome.
 
 p10â€“p90: middle 80% of outcomes.
 
@@ -171,7 +171,7 @@ Re-run until guardrails show âœ“.
   1. **Party & DPR** tab: enter each PCâ€™s **AC**, **HP**, and **save bonuses**; add either **Manual DPR** or **Novaâ†’Effective** rows.
   2. **Boss Kit** tab: add the bossâ€™s attacks (to-hit/DC, damage, save targets, uses/round, melee?), plus **lair**, **recharge**, and any **on-hit rider**.
   3. **âš”ï¸ Encounter MC** tab: set **Trials** (10â€“30k), **Max Rounds** (~12), **Initiative** (random), and the **Party DPR CV** (variance, default 0.60).
-  4. Click **Run Encounter Simulation**. Read **Median TTK**, **p10â€“p90**, **TPK%**, and **PCs down**.
+  4. Click **Run Encounter Simulation**. Read each strategy's **party win**, **party wipe**, and **still fighting** rates, then use typical resolution and remaining boss HP to see why failures occurred.
   5. If pacing is off, hit **Tune Everything** to set boss HP for the target duration and outgoing pressure for collapse 2–3 rounds later.
 
 ---
@@ -185,7 +185,7 @@ Re-run until guardrails show âœ“.
   - `P(TTK â‰¥ slow) â‰¤ cap` (avoid slogs)
   - `P(â‰¥ K PCs down at victory) â‰ˆ target` (lethality band)
   - `P(TPK) â‰¤ cap`
-- **Charts:** unconditional **boss survival curve** across all trials and a successful-kill **TTK distribution**.
+- **Charts:** cumulative party victories and wipes by round, plus the unconditional final outcome mix for both strategies.
 - **Per-use targeting:** every attack independently samples from **all living PCs**; each save ability samples its configured number of distinct targets. Minions use the same rules.
 - **Crunchy crits:** crit = *max dice + one rolled* (modifier once) for attack rolls; save-based effects donâ€™t crit (RAW).
 

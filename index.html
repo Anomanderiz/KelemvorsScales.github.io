@@ -435,6 +435,7 @@
 
         <div class="card">
           <h3>Monte Carlo Validation</h3>
+          <p class="hint">Results are unconditional across every trial: party victory, party wipe, or still fighting at Max Rounds. Failure rows show how much boss HP typically remained, so even one-sided encounters produce actionable information.</p>
           <div class="stats-grid">
             <div id="lblTtkMedian" class="stat"></div>
             <div id="lblTtkP1090" class="stat"></div>
@@ -447,12 +448,12 @@
         <div class="split split-charts">
           <div class="card">
             <div class="chart-wrap">
-              <canvas id="survChart" aria-label="Boss survival curve"></canvas>
+              <canvas id="survChart" aria-label="Cumulative encounter victories and wipes"></canvas>
             </div>
           </div>
           <div class="card">
             <div class="chart-wrap">
-              <canvas id="ttkChart" aria-label="Time-to-kill distribution"></canvas>
+              <canvas id="ttkChart" aria-label="Final encounter outcome mix"></canvas>
             </div>
           </div>
         </div>
