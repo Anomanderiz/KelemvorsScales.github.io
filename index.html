@@ -256,6 +256,7 @@
           <h2>Deterministic DPR Snapshot</h2>
           <button id="btnComputeDet" class="btn btn-accent">Compute</button>
         </div>
+        <div class="card"><p class="hint">Uses the Boss-Blitz baseline: the full minion pack remains active. Values include recurring THP and supplied healing and are capped at the round-13 display horizon.</p></div>
         <div class="card">
           <div id="detTable" class="table-mount"></div>
         </div>
@@ -276,6 +277,7 @@
       <section id="panel-ttd" class="panel">
         <div class="card">
           <h2>Boss Time to Die</h2>
+          <p class="hint">Boss Blitz is shown first. These are steady-DPR base estimates; Full Analysis accounts for casualties, lost party actions, minion offense, initiative, and unresolved fights.</p>
           <div class="radio-row">
             <label><input id="ttdModeManual" type="radio" name="ttdMode" value="manual"> Use DPR as entered</label>
             <label><input id="ttdModeNova"   type="radio" name="ttdMode" value="nova" checked> Convert to effective DPR</label>
@@ -290,7 +292,7 @@
 
         <div class="card">
           <h2>Minion Pack</h2>
-          <p class="hint">Clear First spends attacks on the pack before damaging the boss. Boss Blitz bypasses minion HP, but leaves the full pack attacking until the boss falls. Tune Everything keeps minions at 20+ HP and can shift unsafe replenishing waves from every round to every other round.</p>
+          <p class="hint">Boss Blitz is the default: all party damage goes to the boss while the full pack remains active. Minion Clear is an optional DM-facing comparison where the party spends attacks on the pack first. Tune Everything keeps minions at 20+ HP and can shift unsafe replenishing waves from every round to every other round.</p>
           <div class="form-grid">
             <label>Minion Count
               <input id="optMinionCount" type="number" min="0" max="99" step="1">
@@ -316,8 +318,8 @@
         </div>
 
         <div class="card" id="minionTtdCard" style="display:none">
-          <h2>Clear-First Minion Phase — Round by Round</h2>
-          <p class="hint">This table shows the intended Clear-First path; overflow DPR spills to the boss when minions die mid-round.</p>
+          <h2>Optional Minion-Clear Phase — Round by Round</h2>
+          <p class="hint">This secondary scenario shows party attacks spent on minions first; overflow DPR spills to the boss when minions die mid-round.</p>
           <div id="minionTtdTable" class="table-mount"></div>
         </div>
       </section>
@@ -365,8 +367,8 @@
             <h2>Encounter Balancer</h2>
           </div>
           <p class="hint">
-            Clear First is the intended pacing baseline. Full Analysis also stress-tests Boss Blitz,
-            where the party ignores minions and leaves their full offense active until the boss falls.
+            Boss Blitz is the pacing baseline: the party attacks the boss while configured minions remain active.
+            Full Analysis also shows Minion Clear as a secondary tactical possibility for the DM to consider.
             Boss HP is budgeted independently for 7–10 rounds; damage targets an unassisted first drop at rounds 5–6 and an assisted wipe at rounds 12–13 if combat continues.
           </p>
           <div class="form-grid">
@@ -397,10 +399,10 @@
             </label>
             <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR to Effective</label>
             <label class="checkbox"><input id="tightPacingEnabled" type="checkbox" checked> Boss HP Pacing (round-7 floor + 4 resistances)</label>
-            <label>Kill Rate Warning Target (0.50–0.95)
+            <label>Boss-Blitz Win-by-Target Goal (0.50–0.95)
               <input id="tuneKillRate" type="number" min="0.50" max="0.95" step="0.01">
             </label>
-            <label>Band Warning Width (rounds)
+            <label>Boss-Blitz Victory Band Limit (rounds)
               <input id="tuneBandMax" type="number" min="0.5" max="10" step="0.1">
             </label>
           </div>
@@ -412,17 +414,17 @@
 
         <div class="pacing-metrics">
           <div class="card metric-card">
-            <div class="metric-label">Boss HP</div>
+            <div class="metric-label">Current Boss HP</div>
             <div class="metric-value" id="pacingBossHp">-</div>
             <div class="metric-sub" id="pacingBossHpSub">exact target rounds</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">First PC Falls</div>
+            <div class="metric-label">First-PC Depletion</div>
             <div class="metric-value" id="pacingFirstDown">-</div>
-            <div class="metric-sub">unassisted; THP included</div>
+            <div class="metric-sub" id="pacingFirstDownSub">current estimate · target R5–6</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">Party Wipe</div>
+            <div class="metric-label">Full-Party Depletion</div>
             <div class="metric-value" id="pacingPartyWipe">-</div>
             <div class="metric-sub" id="pacingPartyWipeSub">with expected healing</div>
           </div>
@@ -466,7 +468,7 @@
         </div>
 
         <div class="card">
-          <h3>Per-PC Deterministic Pressure</h3>
+          <h3>Boss-Blitz Deterministic Pressure</h3>
           <div id="pacingTable" class="table-mount"></div>
         </div>
       </section>

@@ -66,7 +66,7 @@ Fast, average-based snapshot of boss damage versus each PC.
 
 ## â³ Boss TTD
 
-Computes time to boss defeat from total incoming effective DPR, resistance, and regen. With minions configured it shows both **Clear First** (minion HP absorbs party actions) and **Boss Blitz** (all party damage goes to the boss while the full pack keeps attacking).
+Computes time to boss defeat from total incoming effective DPR, resistance, and regen. **Boss Blitz** is shown first as the baseline (all party damage goes to the boss while the full pack keeps attacking); **Minion Clear** is the secondary DM-facing possibility where minion HP absorbs party actions.
 
 ## ðŸŽ¯ Bossâ†’PC MC
 
@@ -74,13 +74,13 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 ## âš”ï¸ Encounter MC
 
-Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle. Every analysis runs Clear First and Boss Blitz side by side, including separate survival curves, TTK distributions, casualty timing, and TPK risk.
+Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle. Every analysis runs the Boss-Blitz baseline and Minion-Clear comparison side by side, including separate survival curves, TTK distributions, casualty timing, and TPK risk.
 
 Tune Everything treats durability and lethality as separate budgets. Boss HP is based on party DPR against the boss alone for a 7–10 round target, so Boss Blitz never makes the boss itself cheaper. With Boss HP Pacing enabled, the boss cannot fall before round 7; four Legendary Resistances also smooth exceptional pre-target burst.
 
-Encounter damage is calibrated separately against two constraints: an unassisted first PC depletion around rounds 5–6 (THP counts, healing does not) and assisted full-party depletion around rounds 12–13 if the boss survives past round 10 (both THP and supplied healing count). The configured TPK ceiling applies to both Clear First and Boss Blitz and cannot be set above 25%.
+Encounter damage is calibrated on the Boss-Blitz baseline against two constraints: an unassisted first PC depletion around rounds 5–6 (THP counts, healing does not) and assisted full-party depletion around rounds 12–13 if the boss survives past round 10 (both THP and supplied healing count). The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.
 
-Replenishing minions support one- or two-round wave cadence. Auto-tuning never reduces them below 20 HP. If an every-round Clear-First fight is still over the TPK ceiling at 20 HP, their wave cadence shifts to every other round before boss HP is touched.
+Replenishing minions support one- or two-round wave cadence. Auto-tuning never reduces them below 20 HP. If an every-round Minion-Clear comparison is still over the TPK ceiling at 20 HP, their wave cadence shifts to every other round before boss HP is touched.
 
 Outcome summary (victory, wipe, or still fighting), typical resolution rounds, boss HP remaining on failures, cumulative outcome curves, and final outcome mix.
 
@@ -148,7 +148,7 @@ Initiative: if the boss acts first, PCs might lose actions that round if they dr
 
 Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. THP is per target, while expected healing is entered as a party total and divided evenly across active PCs.
 
-Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules. Clear First reduces the number of acting minions as the pack takes damage; Boss Blitz leaves the full configured count active until the boss dies.
+Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules. Minion Clear reduces the number of acting minions as the pack takes damage; Boss Blitz leaves the full configured count active until the boss dies.
 
 Balancing playbook
 
@@ -182,7 +182,7 @@ Re-run until guardrails show âœ“.
 
 ## Features
 
-- **Encounter Monte Carlo:** full fights under both Clear First and Boss Blitz, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, minions, per-target THP/round, expected party healing, regen/resistance, and PCs dropping.
+- **Encounter Monte Carlo:** full fights under the Boss-Blitz baseline and Minion-Clear comparison, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, minions, per-target THP/round, expected party healing, regen/resistance, and PCs dropping.
 - **Tune Everything:** sets boss HP from boss-only party DPR, independently scales encounter pressure for the round 5–6 first-down and round 12–13 collapse budgets, and tunes ignored-minion pressure without allowing either strategy above the TPK ceiling. Replenishing minions retain at least 20 HP and fall back to every-other-round waves when needed.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)
