@@ -290,7 +290,7 @@
 
         <div class="card">
           <h2>Minion Pack</h2>
-          <p class="hint">Clear First spends attacks on the pack before damaging the boss. Boss Blitz bypasses minion HP, but leaves the full pack attacking until the boss falls. Minion average DPR is set in Boss Kit.</p>
+          <p class="hint">Clear First spends attacks on the pack before damaging the boss. Boss Blitz bypasses minion HP, but leaves the full pack attacking until the boss falls. Tune Everything keeps minions at 20+ HP and can shift unsafe replenishing waves from every round to every other round.</p>
           <div class="form-grid">
             <label>Minion Count
               <input id="optMinionCount" type="number" min="0" max="99" step="1">
@@ -301,7 +301,13 @@
             <label>Minion HP (each)
               <input id="optMinionHp" type="number" min="1" max="9999" step="1">
             </label>
-            <label class="checkbox"><input id="optMinionReplenish" type="checkbox"> Replenishing (full count spawns each round)</label>
+            <label class="checkbox"><input id="optMinionReplenish" type="checkbox"> Replenishing waves</label>
+            <label>Wave Cadence
+              <select id="optMinionReplenishEvery">
+                <option value="1">Every round</option>
+                <option value="2">Every other round</option>
+              </select>
+            </label>
           </div>
         </div>
 
@@ -361,13 +367,14 @@
           <p class="hint">
             Clear First is the intended pacing baseline. Full Analysis also stress-tests Boss Blitz,
             where the party ignores minions and leaves their full offense active until the boss falls.
+            Boss HP is budgeted independently for 7–10 rounds; damage targets an unassisted first drop at rounds 5–6 and an assisted wipe at rounds 12–13 if combat continues.
           </p>
           <div class="form-grid">
             <label>Target Encounter Rounds
-              <input id="pacingRounds" type="number" min="5" max="10" step="1">
+              <input id="pacingRounds" type="number" min="7" max="10" step="1">
             </label>
-            <label>Encounter TPK Warning Cap (0-1)
-              <input id="tuneTpkCap" type="number" min="0" max="1" step="0.001">
+            <label>Encounter TPK Cap (0-0.25)
+              <input id="tuneTpkCap" type="number" min="0" max="0.25" step="0.001">
             </label>
             <label>Boss DPR Multiplier
               <input id="optBossDprMult" type="number" min="0" max="20" step="0.01">
@@ -389,7 +396,7 @@
               </select>
             </label>
             <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR to Effective</label>
-            <label class="checkbox"><input id="tightPacingEnabled" type="checkbox" checked> Legendary Resistance HP Pacing (4 uses)</label>
+            <label class="checkbox"><input id="tightPacingEnabled" type="checkbox" checked> Boss HP Pacing (round-7 floor + 4 resistances)</label>
             <label>Kill Rate Warning Target (0.50–0.95)
               <input id="tuneKillRate" type="number" min="0.50" max="0.95" step="0.01">
             </label>
@@ -412,7 +419,7 @@
           <div class="card metric-card">
             <div class="metric-label">First PC Falls</div>
             <div class="metric-value" id="pacingFirstDown">-</div>
-            <div class="metric-sub">deterministic round</div>
+            <div class="metric-sub">unassisted; THP included</div>
           </div>
           <div class="card metric-card">
             <div class="metric-label">Party Wipe</div>

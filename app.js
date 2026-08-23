@@ -5,13 +5,18 @@
   const NOVA_METHODS = ["attack", "save_half", "auto_hit"];
   const STORAGE_KEY = "kelemvor_scales_web_state_v1";
   const IS_WORKER = typeof document === "undefined" && typeof self !== "undefined";
-  const MIN_TARGET_ROUNDS = 5;
+  const MIN_TARGET_ROUNDS = 7;
   const MAX_TARGET_ROUNDS = 10;
   const BOSS_TUNE_MIN_ROUNDS = 7;
   const BOSS_TUNE_MAX_ROUNDS = 10;
-  const FIRST_PC_DANGER_GRACE_ROUNDS = 1;
+  const BOSS_MINIMUM_SURVIVAL_ROUND = 7;
+  const FIRST_PC_DANGER_MIN_ROUND = 5;
+  const FIRST_PC_DANGER_MAX_ROUND = 6;
+  const FIRST_PC_DANGER_TARGET_ROUND = 5.5;
   const TPK_GRACE_MIN_ROUNDS = 2;
   const TPK_GRACE_MAX_ROUNDS = 3;
+  const MAX_TPK_WARNING_CAP = 0.25;
+  const MINION_MIN_TUNED_HP = 20;
   const REPLENISHING_MINION_ABSORB_FRACTION = 0.65;
   const STATIC_MINION_PHASE_FRACTION = 0.20;
   const MINION_STRATEGY_CLEAR_FIRST = "clear_first";
@@ -81,13 +86,13 @@
     mc_show_hist: true,
 
     enc_trials: 10000,
-    enc_max_rounds: 12,
+    enc_max_rounds: 13,
     enc_use_nova: true,
     dpr_cv: 0.6,
     initiative_mode: "random",
 
     tune_target_median: 10.0,
-    tune_tpk_cap: 0.05,
+    tune_tpk_cap: 0.25,
     tune_kill_rate: 0.75,
     tune_band_max: 3.0,
 
@@ -101,6 +106,7 @@
     minion_ac: 14,
     minion_hp: 15,
     minion_replenish: false,
+    minion_replenish_every: 1,
 
     minion_atk_enabled: false,
     minion_atk_bonus: 4,
@@ -283,7 +289,7 @@
       "pacingRounds",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingPartyWipe", "pacingPartyWipeSub",
       "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
-      "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish",
+      "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish", "optMinionReplenishEvery",
       "optMinionAtkEnabled", "optMinionAtkBonus", "optMinionAtkAvg",
       "optMinionSaveEnabled", "optMinionSaveStat", "optMinionSaveDc", "optMinionSaveAvg", "optMinionSaveTargets",
       "minionTtdCard", "minionTtdTable",
@@ -525,7 +531,7 @@
     bindControl("mcShowHist", "mc_show_hist", (el) => Boolean(el.checked));
 
     bindControl("encTrials", "enc_trials", (el) => Math.max(1000, safeInt(el.value, 10000)));
-    bindControl("encMaxRounds", "enc_max_rounds", (el) => Math.max(1, safeInt(el.value, 12)));
+    bindControl("encMaxRounds", "enc_max_rounds", (el) => Math.max(1, safeInt(el.value, 13)));
     bindControl("encDprCv", "dpr_cv", (el) => clamp(safeFloat(el.value, 0.6), 0.05, 2.0));
     bindControl("encInitiative", "initiative_mode", (el) => {
       const v = String(el.value || "random");
@@ -534,7 +540,7 @@
     bindControl("encUseNova", "enc_use_nova", (el) => Boolean(el.checked));
     bindControl("tightPacingEnabled", "tight_pacing_enabled", (el) => Boolean(el.checked));
 
-    bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.05), 0.0, 1.0));
+    bindControl("tuneTpkCap",    "tune_tpk_cap",       (el) => clamp(safeFloat(el.value, 0.25), 0.0, MAX_TPK_WARNING_CAP));
     bindControl("tuneKillRate",  "tune_kill_rate",     (el) => clamp(safeFloat(el.value, 0.75), 0.50, 0.95));
     bindControl("tuneBandMax",   "tune_band_max",      (el) => Math.max(0.5, safeFloat(el.value, 3.0)));
 
@@ -548,6 +554,7 @@
     bindControl("optMinionAc",          "minion_ac",          (el) => Math.max(1, safeInt(el.value, 14)),   { refreshEff: true });
     bindControl("optMinionHp",          "minion_hp",          (el) => Math.max(1, safeFloat(el.value, 15)), { refreshEff: true });
     bindControl("optMinionReplenish",   "minion_replenish",   (el) => Boolean(el.checked),                  { refreshEff: true });
+    bindControl("optMinionReplenishEvery", "minion_replenish_every", (el) => clamp(safeInt(el.value, 1), 1, 2), { refreshEff: true });
     bindControl("optMinionAtkEnabled",  "minion_atk_enabled", (el) => Boolean(el.checked),                  { refreshEff: true });
     bindControl("optMinionAtkBonus",    "minion_atk_bonus",   (el) => clamp(safeInt(el.value, 4), -10, 20), { refreshEff: true });
     bindControl("optMinionAtkAvg",      "minion_atk_avg",     (el) => Math.max(0, safeFloat(el.value, 5)),  { refreshEff: true });
@@ -666,6 +673,7 @@
     setControlValue(els.optMinionAc,       state.minion_ac);
     setControlValue(els.optMinionHp,       state.minion_hp);
     setControlChecked(els.optMinionReplenish, state.minion_replenish);
+    setControlValue(els.optMinionReplenishEvery, state.minion_replenish_every);
     setControlChecked(els.optMinionAtkEnabled, state.minion_atk_enabled);
     setControlValue(els.optMinionAtkBonus, state.minion_atk_bonus);
     setControlValue(els.optMinionAtkAvg,   state.minion_atk_avg);
@@ -956,13 +964,11 @@
     let suffix = "";
     if (minionPhase) {
       if (!Number.isFinite(minionPhase.minionPhaseRounds)) {
-        // Replenishing minions block the party — boss never dies under pure focus-fire
         clearFirstExact = Number.POSITIVE_INFINITY;
-        suffix = " (replenishing minions screen boss — party DPR too low to one-round the pack)";
-      } else if (minionPhase.replenishing && minionPhase.canClearPerRound) {
-        // Replenishing but party clears each round; minionPhaseRounds = rounds to kill boss
+        suffix = ` (replenishing minions screen boss — party DPR too low for the ${minionPhase.replenishEvery || 1}R wave cadence)`;
+      } else if (minionPhase.replenishing) {
         clearFirstExact = minionPhase.minionPhaseRounds;
-        suffix = " (replenishing pack cleared each round; overflow kills boss)";
+        suffix = ` (replenishing pack on a ${minionPhase.replenishEvery || 1}R cadence; overflow kills boss)`;
       } else {
         // Non-replenishing: minion phase clears, then party focuses boss
         const remainingBossHp = minionPhase.bossHpAfterMinionPhase;
@@ -1204,7 +1210,8 @@
 
   function summarizeEncounterStrategy(metrics, targetRound) {
     const finiteTtk = metrics.finiteTtk || metrics.ttk.filter((value) => Number.isFinite(value));
-    const finiteFirstDown = (metrics.firstDownRound || []).filter((value) => Number.isFinite(value));
+    const firstDownSource = metrics.firstDownRoundUnassisted || metrics.firstDownRound || [];
+    const finiteFirstDown = firstDownSource.filter((value) => Number.isFinite(value));
     const total = Math.max(1, metrics.ttk.length);
     const tpkFlags = metrics.tpkFlags || metrics.ttk.map(() => false);
     const finiteWipeRounds = (metrics.tpkRound || []).filter((value) => Number.isFinite(value));
@@ -1219,7 +1226,7 @@
       victoryRate,
       killRate: victoryRate,
       killByTarget: metrics.ttk.filter((value) => Number.isFinite(value) && value <= targetRound).length / total,
-      medianFirstDown: empiricalMedianRound(metrics.firstDownRound || []),
+      medianFirstDown: empiricalMedianRound(firstDownSource),
       firstDownByDangerRound: Number.isFinite(metrics.firstDownByDangerRound)
         ? metrics.firstDownByDangerRound
         : finiteFirstDown.filter((value) => value <= BLITZ_DANGER_ROUND).length / total,
@@ -1261,7 +1268,7 @@
   }
 
   function monteCarloRecommendation(clearSummary, blitzSummary, targetRound) {
-    const cap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
+    const cap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     const requestedWinRate = clamp(safeFloat(state.tune_kill_rate, 0.75), 0, 1);
     const best = clearSummary.victoryRate >= blitzSummary.victoryRate ? clearSummary : blitzSummary;
     if (Math.max(clearSummary.victoryRate, blitzSummary.victoryRate) < 0.10) {
@@ -1270,19 +1277,21 @@
       }
       return `Action: reduce boss durability; failed attempts leave about ${formatPercent(best.medianBossHpOnFailure || 0)} boss HP at the round limit.`;
     }
-    if (clearSummary.tpkProb > cap + 1e-9) {
-      return `Action: lower boss/minion pressure; Clear First wipe risk exceeds the ${formatPercent(cap)} warning cap.`;
+    const worstTpk = Math.max(clearSummary.tpkProb, blitzSummary.tpkProb);
+    if (worstTpk > cap + 1e-9) {
+      const strategy = blitzSummary.tpkProb > clearSummary.tpkProb ? "Boss Blitz" : "Clear First";
+      return `Action: lower boss/minion pressure; ${strategy} wipe risk exceeds the ${formatPercent(cap)} cap.`;
     }
     if (clearSummary.unresolvedRate > 0.25) {
-      return `Action: reduce boss durability or extend Max Rounds; ${formatPercent(clearSummary.unresolvedRate)} of Clear-First trials remain unresolved.`;
+      return `Action: ease minion absorption/cadence or extend Max Rounds; ${formatPercent(clearSummary.unresolvedRate)} of Clear-First trials remain unresolved.`;
     }
-    if (clearSummary.killByTarget + 0.02 < requestedWinRate) {
-      return `Action: improve party kill pace; only ${formatPercent(clearSummary.killByTarget)} win by target round ${targetRound}.`;
+    if (blitzSummary.killByTarget + 0.02 < requestedWinRate) {
+      return `Action: improve boss-only kill pace; only ${formatPercent(blitzSummary.killByTarget)} of Boss-Blitz trials win by target round ${targetRound}.`;
     }
     if (blitzSummary.victoryRate > clearSummary.victoryRate + 0.10 && blitzSummary.firstDownByDangerRound < BLITZ_DANGER_PROBABILITY) {
       return `Action: strengthen minion offense; Boss Blitz improves win chance without enough round-${BLITZ_DANGER_ROUND} danger.`;
     }
-    return `Result: the Clear-First baseline is viable and Boss Blitz carries ${formatPercent(blitzSummary.firstDownByDangerRound)} first-casualty risk by round ${BLITZ_DANGER_ROUND}.`;
+    return `Result: the Clear-First baseline is viable and Boss Blitz carries ${formatPercent(blitzSummary.firstDownByDangerRound)} unassisted first-casualty risk by round ${BLITZ_DANGER_ROUND}.`;
   }
 
   function renderStrategyComparison(clearSummary, blitzSummary) {
@@ -1303,7 +1312,7 @@
       "Victory window": summary.hasVictories ? `${formatRoundMetric(summary.p10)}-${formatRoundMetric(summary.p90)}` : "No victories",
       "Kill by target": formatPercent(summary.killByTarget),
       "Boss HP if no win": summary.hasFailures ? formatPercent(summary.medianBossHpOnFailure) : "—",
-      [`First down by R${BLITZ_DANGER_ROUND}`]: formatPercent(summary.firstDownByDangerRound),
+      [`Unassisted down by R${BLITZ_DANGER_ROUND}`]: formatPercent(summary.firstDownByDangerRound),
       "PCs down on wins": summary.hasVictories ? summary.meanDowns.toFixed(2) : "—",
     };
   }
@@ -1322,18 +1331,20 @@
   function renderTacticalVerdict(pacing, clearSummary, blitzSummary) {
     if (!els.pacingBalance || Math.max(0, safeInt(state.minion_count, 0)) <= 0) return;
     const el = els.pacingBalance;
-    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
+    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     let cls;
     let badge;
     let analysis;
-    if (clearSummary.tpkProb > tpkCap + 1e-9) {
+    const worstTpk = Math.max(clearSummary.tpkProb, blitzSummary.tpkProb);
+    if (worstTpk > tpkCap + 1e-9) {
+      const strategy = blitzSummary.tpkProb > clearSummary.tpkProb ? "Boss Blitz" : "Clear First";
       cls = "bal-hard";
-      badge = '<span class="pacing-badge badge-hard">Both Paths Lethal</span>';
-      analysis = `Clear First has ${formatPercent(clearSummary.tpkProb)} TPK risk, above the ${formatPercent(tpkCap)} warning cap. Reduce encounter pressure before increasing the blitz punishment.`;
+      badge = '<span class="pacing-badge badge-hard">Over TPK Cap</span>';
+      analysis = `${strategy} has ${formatPercent(worstTpk)} TPK risk, above the ${formatPercent(tpkCap)} cap. Reduce encounter pressure before increasing the blitz punishment.`;
     } else if (blitzSummary.firstDownByDangerRound >= BLITZ_DANGER_PROBABILITY) {
       cls = "bal-ok";
       badge = '<span class="pacing-badge badge-ok">Blitz Punished</span>';
-      analysis = `Boss Blitz leaves the full pack active and has a ${formatPercent(blitzSummary.firstDownByDangerRound)} chance to drop a PC by round ${BLITZ_DANGER_ROUND}. Clear First remains the pacing baseline at ${pacing.targetRounds} rounds.`;
+      analysis = `Boss Blitz leaves the full pack active and has a ${formatPercent(blitzSummary.firstDownByDangerRound)} chance to drop a PC without healing by round ${BLITZ_DANGER_ROUND}. Clear First remains the tactical baseline.`;
     } else {
       cls = "bal-warn";
       badge = '<span class="pacing-badge badge-warn">Blitz Loophole</span>';
@@ -1453,7 +1464,7 @@
     let targetRound      = targetEncounterRounds();
     const origTarget     = targetRound;
     const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
-    const tpkCap         = safeFloat(state.tune_tpk_cap, 0.05);
+    const tpkCap         = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     const bandTarget     = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const originalTrials = safeInt(state.enc_trials, 10000);
     const quickTrials    = Math.max(3000, Math.floor(originalTrials * 0.4));
@@ -1693,7 +1704,7 @@
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
     const targetRound = bossTuneTargetRounds();
     const collapseTarget = targetPartyWipeRound(targetRound);
-    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.05), 0, 1);
+    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
     const changes = [];
@@ -1711,11 +1722,11 @@
     const pacingResult = computePacingResult();
 
     if (!Number.isFinite(pacingResult.recommendedBossHp) || pacingResult.recommendedBossHp <= 0) {
-      alert("Auto-tune could not find a boss HP target. Check party DPR, boss resistance/regen, and replenishing minions.");
+      alert("Auto-tune could not find a boss HP target. Check party DPR, boss resistance, and regeneration.");
       setStatus("Auto-tune failed: no valid boss HP target.", 4200);
       return;
     }
-    if (!Number.isFinite(pacingResult.targetBossDprMult) || pacingResult.targetBossDprMult <= 0) {
+    if (pacingResult.pressureImpossible) {
       alert("Auto-tune could not set party-collapse pressure because the enabled boss kit deals no expected damage.");
       setStatus("Auto-tune failed: no boss pressure to scale.", 4200);
       return;
@@ -1725,15 +1736,15 @@
     // party's expected damage budget for the target fight length; it must not
     // be reduced to satisfy a TPK or kill-rate constraint.
     const tunedHp = Math.max(1, Math.round(pacingResult.recommendedBossHp));
-    const pacingMult = round2(clamp(pacingResult.targetBossDprMult, 0, 20));
+    const pacingMult = round2(clamp(safeFloat(pacingResult.targetBossDprMult, 0), 0, 20));
     state.boss_hp = tunedHp;
     state.boss_dpr_mult = pacingMult;
-    state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 12), Math.ceil(collapseTarget));
+    state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 13), Math.ceil(collapseTarget));
     state.enc_trials = originalTrials;
 
-    // Four Legendary Resistances are the only early-burst pacing gate. Base HP
-    // still carries the expected ten-round damage budget; there is no hard
-    // minimum-round floor and no search path that can replace it with 1 HP.
+    // Base HP carries the full target-round party-DPR budget. Four Legendary
+    // Resistances smooth exceptional burst, and HP pacing prevents a tuned boss
+    // from being removed before round 7 even under a high-roll blitz.
     state.tight_pacing_enabled = true;
     state.tight_cap_pct = 0.25;
     state.tight_cap_resources = 4;
@@ -1757,9 +1768,22 @@
     }
     state.boss_hp = tunedHp;
 
+    setStatus("Auto-tuning encounter... checking Clear-First minion cadence.", 0);
+    const minionCadenceTune = await tuneMinionCadenceForSurvivability(tpkCap, originalTrials);
+    changes.push(...minionCadenceTune.changes);
+
     setStatus(`Auto-tuning encounter... calibrating ignored-minion danger at round ${BLITZ_DANGER_ROUND}.`, 0);
     const minionOffenseTune = await tuneMinionOffenseForBlitz(tpkCap, originalTrials);
     changes.push(...minionOffenseTune.changes);
+
+    changes.push(...recalibrateEncounterDamage("final minion setup"));
+    const finalCadenceTune = await tuneMinionCadenceForSurvivability(tpkCap, originalTrials);
+    changes.push(...finalCadenceTune.changes);
+    if (finalCadenceTune.changes.length) {
+      changes.push(...recalibrateEncounterDamage("every-other-round minion cadence"));
+    }
+    const pressureCapTune = await capBossPressureAtTpkLimit(tpkCap, originalTrials);
+    changes.push(...pressureCapTune.changes);
     state = normalizeState(state);
     syncControlsFromState();
     persistState();
@@ -1774,20 +1798,21 @@
       setStatus("Auto-tune applied values, but final simulation failed.", 4200);
       return;
     }
-    const finalMetrics = finalAnalysis.clearFirst;
+    const finalClearMetrics = finalAnalysis.clearFirst;
     const finalBlitzMetrics = finalAnalysis.bossBlitz;
+    const finalMetrics = finalBlitzMetrics;
 
     const finiteTtk = finalMetrics.ttk.filter((v) => Number.isFinite(v));
     const finalMed = finiteTtk.length ? percentile(finiteTtk, 50) : Infinity;
     const finalP10 = finiteTtk.length ? percentile(finiteTtk, 10) : Infinity;
     const finalP90 = finiteTtk.length ? percentile(finiteTtk, 90) : Infinity;
     const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
-    const finalTpk = finalMetrics.tpkProb;
+    const finalTpk = Math.max(finalClearMetrics.tpkProb, finalBlitzMetrics.tpkProb);
     const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
-    const finalProjectedWipe = projectedPartyWipeRound(1, targetRound);
+    const finalProjectedWipe = projectedPartyWipeRound(1, targetPartyWipeMaxRound(targetRound));
     const finalBlitzDanger = safeFloat(finalBlitzMetrics.firstDownByDangerRound, 0);
     const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at pacing targets";
-    const tpkLine = `Encounter TPK ${(100 * finalTpk).toFixed(1)}% (warning cap ${(100 * tpkCap).toFixed(1)}%)`;
+    const tpkLine = `Encounter TPK ${(100 * finalTpk).toFixed(1)}% (cap ${(100 * tpkCap).toFixed(1)}%)`;
     const bandLine = finalBand > bandTarget + 0.5
       ? `\nBand ${finalBand.toFixed(1)}R exceeds ${bandTarget.toFixed(1)}R; party damage variance is wider than requested.`
       : "";
@@ -1795,12 +1820,19 @@
       ? `\nKill by round ${targetRound}: ${(100 * finalKillByTarget).toFixed(1)}% (warning target ${(100 * killRateTarget).toFixed(0)}%)`
       : `\nKill by round ${targetRound}: ${(100 * finalKillByTarget).toFixed(1)}%`;
     const tpkAdvice = finalTpk > tpkCap + 0.005
-      ? `\nEncounter TPK exceeds the warning cap, but Tune Everything preserved the ${targetRound}-round HP and ${formatRoundWindow(targetPartyWipeMinRound(targetRound), targetPartyWipeMaxRound(targetRound))} collapse targets instead of lowering boss HP.`
+      ? `\nEncounter TPK still exceeds the hard ${formatPercent(tpkCap)} ceiling after the safety pass; reduce minion count/offense or widen the party's defenses. Boss HP was not reduced.`
       : "";
-    const minionWarnings = minionOffenseTune.warnings.length
-      ? `\n${minionOffenseTune.warnings.map((warning) => `Warning: ${warning}`).join("\n")}`
+    const allMinionWarnings = [
+      ...(minionTune.warnings || []),
+      ...(minionCadenceTune.warnings || []),
+      ...minionOffenseTune.warnings,
+      ...(finalCadenceTune.warnings || []),
+      ...(pressureCapTune.warnings || []),
+    ];
+    const minionWarnings = allMinionWarnings.length
+      ? `\n${allMinionWarnings.map((warning) => `Warning: ${warning}`).join("\n")}`
       : "";
-    const blitzLine = `\nBoss Blitz first PC down by round ${BLITZ_DANGER_ROUND}: ${formatPercent(finalBlitzDanger)}`;
+    const blitzLine = `\nBoss Blitz unassisted first PC down by round ${BLITZ_DANGER_ROUND}: ${formatPercent(finalBlitzDanger)}`;
 
     alert(
       `Auto-tune complete:\n${lines}\n\n` +
@@ -1981,7 +2013,7 @@
     }
 
     const trials = Math.max(1, safeInt(opts.enc_trials, 10000));
-    const maxRounds = Math.max(1, safeInt(opts.enc_max_rounds, 12));
+    const maxRounds = Math.max(1, safeInt(opts.enc_max_rounds, 13));
     const resist = Math.max(1e-6, safeFloat(opts.resist_factor, 1.0));
     const regen = Math.max(0, safeFloat(opts.boss_regen, 0.0));
     const thpAvg = Math.max(0, averageDamage(opts.thp_expr || "0"));
@@ -2012,6 +2044,7 @@
     const bossDamageThisRound = new Array(trials).fill(0);
     const tightResourcesLeft = new Array(trials).fill(tightCapResources);
     const pcsHp = Array.from({ length: trials }, () => party.map((pc) => Math.max(1, safeFloat(pc.HP, 1))));
+    const pcsHpUnassisted = Array.from({ length: trials }, () => party.map((pc) => Math.max(1, safeFloat(pc.HP, 1))));
     const pcsAlive = Array.from({ length: trials }, () => party.map(() => true));
 
     const pcAc = party.map((pc) => Math.max(1, safeInt(pc.AC, 10)));
@@ -2023,6 +2056,7 @@
 
     const ttk = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const firstDownRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
+    const firstDownRoundUnassisted = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const tpkRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const tpkFlags = new Array(trials).fill(false);
     const pcsDownAtVictory = new Array(trials).fill(0);
@@ -2038,6 +2072,7 @@
       ? minionHitRatio(mcMinionAc, Math.max(1, safeInt(opts.boss_ac, 16)))
       : 1;
     const mcMinionReplenish = mcHasMinionPack && Boolean(opts.minion_replenish);
+    const mcMinionReplenishEvery = clamp(safeInt(opts.minion_replenish_every, 1), 1, 2);
     const mcMinionPoolHp = mcHasMinionPack
       ? new Array(trials).fill(mcMinionCount * mcMinionHpEach)
       : null;
@@ -2093,6 +2128,9 @@
         }
         bossDamageThisRound[t] += bossDamage;
         bossHp[t] -= bossDamage;
+        if (tightPacing && roundNumber < BOSS_MINIMUM_SURVIVAL_ROUND && bossHp[t] <= 0) {
+          bossHp[t] = 1;
+        }
       }
 
       if (bossHp[t] <= 0 && !Number.isFinite(ttk[t])) {
@@ -2103,8 +2141,10 @@
 
     for (let rnd = 1; rnd <= maxRounds; rnd += 1) {
       bossDamageThisRound.fill(0);
-      // Replenishing minions: reset each trial's pool at the top of every round.
-      if (minionStrategy === MINION_STRATEGY_CLEAR_FIRST && mcMinionReplenish) {
+      // Replenishing waves arrive on their configured cadence. A two-round
+      // cadence gives the party an extra round to finish the current pack.
+      if (minionStrategy === MINION_STRATEGY_CLEAR_FIRST && mcMinionReplenish
+          && minionWaveSpawnsOnRound(rnd, mcMinionReplenishEvery)) {
         for (let t = 0; t < trials; t += 1) {
           if (!Number.isFinite(ttk[t]) && !tpkFlags[t]) {
             mcMinionPoolHp[t] = mcMinionCount * mcMinionHpEach;
@@ -2163,6 +2203,12 @@
           const blocked = Math.min(rawDamage, thpPool[target]);
           thpPool[target] -= blocked;
           const afterThp = rawDamage - blocked;
+          if (afterThp > 0 && pcsHpUnassisted[t][target] > 0) {
+            pcsHpUnassisted[t][target] -= afterThp;
+            if (pcsHpUnassisted[t][target] <= 0 && !Number.isFinite(firstDownRoundUnassisted[t])) {
+              firstDownRoundUnassisted[t] = rnd;
+            }
+          }
           const healed = Math.min(afterThp, healingPool[target]);
           healingPool[target] -= healed;
           const dealt = afterThp - healed;
@@ -2340,7 +2386,9 @@
       ttk,
       finiteTtk,
       firstDownRound,
-      firstDownByDangerRound: meanOf(firstDownRound.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
+      firstDownRoundUnassisted,
+      firstDownByDangerRound: meanOf(firstDownRoundUnassisted.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
+      firstDownByDangerRoundAssisted: meanOf(firstDownRound.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
       tpkFlags,
       tpkRound,
       tpkProb: meanOf(tpkFlags.map((x) => (x ? 1 : 0))),
@@ -2385,31 +2433,15 @@
     const bossRegen = Math.max(0, safeFloat(state.boss_regen, 0.0));
     const effectivePartyDprOnBoss = Math.max(0, totalPartyDpr / resistFactor - bossRegen);
 
-    // Recommended boss HP — minion-aware
+    // Boss durability is independent of encounter pressure and minion
+    // absorption. Boss Blitz still faces the complete target-round HP budget;
+    // Clear First takes longer because minions consume party actions.
     const minionPhaseInfo = strategy === MINION_STRATEGY_CLEAR_FIRST
       ? computeMinionPhase(totalPartyDpr, useNova)
       : null;
-    let recommendedBossHp;
-    if (!minionPhaseInfo) {
-      recommendedBossHp = effectivePartyDprOnBoss > 0
-        ? Math.max(1, Math.round(effectivePartyDprOnBoss * targetRounds))
-        : 0;
-    } else if (minionPhaseInfo.replenishing && !minionPhaseInfo.canClearPerRound) {
-      // Boss is permanently screened — party can never reach it.
-      recommendedBossHp = 0;
-    } else if (minionPhaseInfo.replenishing && minionPhaseInfo.canClearPerRound) {
-      // Party clears minions every round; only overflow reaches boss.
-      recommendedBossHp = minionPhaseInfo.overflowBossPerRound > 0
-        ? Math.max(1, Math.round(minionPhaseInfo.overflowBossPerRound * targetRounds))
-        : 0;
-    } else {
-      // Non-replenishing: some rounds absorb minions, then boss is exposed.
-      const minionRounds = Math.min(minionPhaseInfo.minionPhaseRounds, targetRounds);
-      const bossRoundsAfter = Math.max(0, targetRounds - minionRounds);
-      const totalBossDmg = minionPhaseInfo.totalBossDmgDuringPhase
-        + effectivePartyDprOnBoss * bossRoundsAfter;
-      recommendedBossHp = totalBossDmg > 0 ? Math.max(1, Math.round(totalBossDmg)) : 0;
-    }
+    const recommendedBossHp = effectivePartyDprOnBoss > 0
+      ? Math.max(1, Math.round(effectivePartyDprOnBoss * targetRounds))
+      : 0;
 
     // Per-PC TTD at current boss DPR
     const attacks = attacksEnabledFromTable(state.attacks_table);
@@ -2428,8 +2460,10 @@
     let targetAttackDpr = 0;
     let targetBossDprMult = null;
     let tpkPressureMult = null;
+    let firstDownPressureMult = null;
+    let pressureImpossible = false;
     let toughestPcName = null;
-    const firstDangerRound = targetFirstPcDangerRound(targetRounds);
+    const firstDangerRound = FIRST_PC_DANGER_TARGET_ROUND;
     const wipeBudgetRound = targetPartyWipeRound(targetRounds);
     const pcRows = [];
 
@@ -2441,29 +2475,50 @@
       const rawBossIncomingPerPc = recurring.attackDpr + recurring.legendaryDpr + lairRechDpr + rawPhaseDpr;
       const rawIncomingPerPc = rawBossIncomingPerPc + pcMinionDpr;
       const totalDprPerPc = rawBossIncomingPerPc * dprMult + pcMinionDpr;
-      const unassistedNetDprPerPc = Math.max(0, totalDprPerPc - thpAvg);
-      const netDprPerPc = Math.max(0, unassistedNetDprPerPc - healingPerPc);
-      const pcTtd = netDprPerPc > 0 ? pcHp / netDprPerPc : Infinity;
+
+      const firstRecurring = recurringBossDprPerPc(pc, attacks, legendary, firstDangerRound, partySize, state);
+      const firstPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, firstDangerRound);
+      const firstMinionDpr = minionDprVsPc(pc, firstDangerRound, useNova, strategy);
+      const firstRawBossDpr = firstRecurring.attackDpr + firstRecurring.legendaryDpr + lairRechDpr + firstPhaseDpr;
+      const unassistedNetDprPerPc = Math.max(0, firstRawBossDpr * dprMult + firstMinionDpr - thpAvg);
       const unassistedPcTtd = unassistedNetDprPerPc > 0 ? pcHp / unassistedNetDprPerPc : Infinity;
 
+      const wipeRecurring = recurringBossDprPerPc(pc, attacks, legendary, wipeBudgetRound, partySize, state);
+      const wipePhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, wipeBudgetRound);
+      const wipeMinionDpr = minionDprVsPc(pc, wipeBudgetRound, useNova, strategy);
+      const wipeRawBossDpr = wipeRecurring.attackDpr + wipeRecurring.legendaryDpr + lairRechDpr + wipePhaseDpr;
+      const wipeNetDprPerPc = Math.max(0, wipeRawBossDpr * dprMult + wipeMinionDpr - thpAvg - healingPerPc);
+      const pcTtd = wipeNetDprPerPc > 0 ? pcHp / wipeNetDprPerPc : Infinity;
+
+      if (Number.isFinite(unassistedPcTtd)) {
+        firstDownRound = Math.min(firstDownRound, unassistedPcTtd);
+      }
       if (Number.isFinite(pcTtd)) {
-        firstDownRound = Math.min(firstDownRound, pcTtd);
         lastDownRound = Math.max(lastDownRound, pcTtd);
       }
       if (Number.isFinite(unassistedPcTtd)) {
         unassistedLastDownRound = Math.max(unassistedLastDownRound, unassistedPcTtd);
       }
 
-      const targetMultForWipe = rawBossIncomingPerPc > 0
-        ? Math.max(0, (pcHp / wipeBudgetRound + thpAvg + healingPerPc - pcMinionDpr) / rawBossIncomingPerPc)
-        : Infinity;
-      const targetMultForFirstDanger = rawBossIncomingPerPc > 0
-        ? Math.max(0, (pcHp / firstDangerRound + thpAvg + healingPerPc - pcMinionDpr) / rawBossIncomingPerPc)
-        : Infinity;
+      const wipeRequiredBossDpr = pcHp / wipeBudgetRound + thpAvg + healingPerPc - wipeMinionDpr;
+      const firstRequiredBossDpr = pcHp / firstDangerRound + thpAvg - firstMinionDpr;
+      const targetMultForWipe = wipeRawBossDpr > 0
+        ? Math.max(0, wipeRequiredBossDpr / wipeRawBossDpr)
+        : wipeRequiredBossDpr <= 0 ? 0 : Infinity;
+      const targetMultForFirstDanger = firstRawBossDpr > 0
+        ? Math.max(0, firstRequiredBossDpr / firstRawBossDpr)
+        : firstRequiredBossDpr <= 0 ? 0 : Infinity;
+      if (!Number.isFinite(targetMultForWipe) || !Number.isFinite(targetMultForFirstDanger)) {
+        pressureImpossible = true;
+      }
 
       if (Number.isFinite(targetMultForWipe) && (tpkPressureMult == null || targetMultForWipe > tpkPressureMult)) {
         tpkPressureMult = targetMultForWipe;
         toughestPcName = pc.Name || "?";
+      }
+      if (Number.isFinite(targetMultForFirstDanger)
+          && (firstDownPressureMult == null || targetMultForFirstDanger < firstDownPressureMult)) {
+        firstDownPressureMult = targetMultForFirstDanger;
       }
 
       pcRows.push({
@@ -2476,7 +2531,7 @@
         "Minion DPR": round2(pcMinionDpr),
         "Scaled DPR/target": round2(totalDprPerPc),
         "Healing/R": round2(healingPerPc),
-        "Net DPR": round2(netDprPerPc),
+        "Net DPR": round2(wipeNetDprPerPc),
         "Unassisted TTD": Number.isFinite(unassistedPcTtd) ? unassistedPcTtd.toFixed(1) : "∞",
         "First Danger Mult": Number.isFinite(targetMultForFirstDanger) ? `${targetMultForFirstDanger.toFixed(2)}x` : "N/A",
         "TPK Mult": Number.isFinite(targetMultForWipe) ? `${targetMultForWipe.toFixed(2)}x` : "N/A",
@@ -2485,10 +2540,11 @@
       });
     }
 
-    // Full-party collapse is the pressure target. First-PC danger remains a
-    // diagnostic because stochastic focus fire, not duplicated average DPR,
-    // determines which individual falls first.
-    targetBossDprMult = Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0;
+    // Satisfy both independent damage budgets: an unassisted first drop around
+    // R5-6, and assisted full-party depletion around R12-13 if the boss lives.
+    const firstPressure = Number.isFinite(firstDownPressureMult) ? firstDownPressureMult : 0;
+    const wipePressure = Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0;
+    targetBossDprMult = Math.max(firstPressure, wipePressure);
     if (targetBossDprMult <= 0) targetBossDprMult = null;
     targetAttackDpr = targetBossDprMult == null ? 0 : round2(targetBossDprMult);
 
@@ -2502,6 +2558,9 @@
       unassistedLastDownRound: unassistedLastDownRound > 0 ? unassistedLastDownRound : null,
       targetAttackDpr: round2(targetAttackDpr),
       targetBossDprMult: targetBossDprMult == null ? null : round2(targetBossDprMult),
+      firstDownPressureMult: firstDownPressureMult == null ? null : round2(firstDownPressureMult),
+      wipePressureMult: tpkPressureMult == null ? null : round2(tpkPressureMult),
+      pressureImpossible,
       bossDprMult: dprMult,
       toughestPcName,
       currentBossHp: safeFloat(state.boss_hp, 200),
@@ -2766,6 +2825,74 @@
     return [header, ...changes];
   }
 
+  function recalibrateEncounterDamage(reason) {
+    const pacing = computePacingResult();
+    if (pacing.pressureImpossible) return [];
+    const correction = safeFloat(pacing.targetBossDprMult, 0);
+    if (!Number.isFinite(correction) || correction < 0 || Math.abs(correction - 1) <= 0.01) return [];
+    state.boss_dpr_mult = round2(clamp(correction, 0, 20));
+    const baked = bakeTunedDamageIntoStatBlock();
+    return baked.length ? [`Encounter damage recalibrated for ${reason}`, ...baked] : [];
+  }
+
+  async function capBossPressureAtTpkLimit(tpkCap, configuredTrials) {
+    const changes = [];
+    const warnings = [];
+    const cap = clamp(safeFloat(tpkCap, 0.25), 0, MAX_TPK_WARNING_CAP);
+    const quickTrials = Math.min(
+      Math.max(1000, safeInt(configuredTrials, 10000)),
+      Math.max(2500, Math.floor(Math.max(1000, safeInt(configuredTrials, 10000)) * 0.3))
+    );
+    const runner = createEncounterWorkerRunner();
+    const runWorstAt = async (scale) => {
+      const [clear, blitz] = await Promise.all([
+        runner.run({ enc_trials: quickTrials, boss_dpr_mult: scale, minion_strategy: MINION_STRATEGY_CLEAR_FIRST }),
+        runner.run({ enc_trials: quickTrials, boss_dpr_mult: scale, minion_strategy: MINION_STRATEGY_BOSS_BLITZ }),
+      ]);
+      if (clear.error || blitz.error) return { error: clear.error || blitz.error, worst: 1 };
+      return { worst: Math.max(clear.tpkProb, blitz.tpkProb), clear, blitz };
+    };
+
+    try {
+      const current = await runWorstAt(1);
+      if (current.error) {
+        warnings.push(`TPK cap could not be validated: ${current.error}`);
+        return { changes, warnings };
+      }
+      if (current.worst <= cap + 1e-9) return { changes, warnings };
+
+      const zero = await runWorstAt(0);
+      if (zero.error || zero.worst > cap + 1e-9) {
+        warnings.push(`TPK risk remains ${formatPercent(zero.worst)} with boss damage removed; reduce minion offense/count or party-action absorption manually.`);
+        return { changes, warnings };
+      }
+
+      let lo = 0;
+      let hi = 1;
+      for (let i = 0; i < 12; i += 1) {
+        const mid = (lo + hi) / 2;
+        const result = await runWorstAt(mid);
+        if (!result.error && result.worst <= cap + 1e-9) lo = mid;
+        else hi = mid;
+      }
+
+      const safeScale = Math.floor(lo * 100) / 100;
+      state.boss_dpr_mult = safeScale;
+      changes.push(`Boss pressure capped at ${safeScale.toFixed(2)}x to keep both strategies at or below ${formatPercent(cap)} TPK`);
+      changes.push(...bakeTunedDamageIntoStatBlock());
+
+      const pacing = computePacingResult();
+      if (pacing.firstDownRound == null || pacing.firstDownRound > FIRST_PC_DANGER_MAX_ROUND
+          || pacing.lastDownRound == null || pacing.lastDownRound > targetPartyWipeMaxRound()) {
+        warnings.push("The 25% TPK ceiling conflicts with at least one damage-timing target; the cap was prioritized without reducing boss HP.");
+      }
+    } finally {
+      runner.close();
+    }
+
+    return { changes, warnings };
+  }
+
   function tuneLegendaryActionsForBossMode() {
     const rows = (state.legendary_actions_table || []).map(sanitizeLegendaryRow);
     state.legendary_actions_table = rows;
@@ -2868,14 +2995,16 @@
 
   function tuneMinionsForBossMode(targetRound) {
     const changes = [];
+    const warnings = [];
     const count = Math.max(0, safeInt(state.minion_count, 0));
-    if (count <= 0) return { changes };
+    if (count <= 0) return { changes, warnings };
 
     const useNova = Boolean(state.enc_use_nova);
     const partyDprVsMinions = expectedPartyDprVsEnemy(useNova, state.minion_ac);
     if (!Number.isFinite(partyDprVsMinions) || partyDprVsMinions <= 0) {
       return {
         changes,
+        warnings,
         error: `Impossible minion setup: party expected DPR against minion AC ${state.minion_ac} is 0. Reduce minion AC, remove minions, or add party accuracy/damage.`,
       };
     }
@@ -2884,20 +3013,27 @@
     let targetPool;
     let reason;
     if (Boolean(state.minion_replenish)) {
-      targetPool = partyDprVsMinions * REPLENISHING_MINION_ABSORB_FRACTION;
-      reason = "replenishing pack remains one-round-clearable";
+      let cadence = clamp(safeInt(state.minion_replenish_every, 1), 1, 2);
+      const oneRoundHp = Math.round(partyDprVsMinions * REPLENISHING_MINION_ABSORB_FRACTION / count);
+      if (cadence === 1 && oneRoundHp < MINION_MIN_TUNED_HP) {
+        cadence = 2;
+        state.minion_replenish_every = cadence;
+        changes.push(`Minion waves: every round -> every other round (preserves ${MINION_MIN_TUNED_HP}+ HP minions)`);
+      }
+      targetPool = partyDprVsMinions * REPLENISHING_MINION_ABSORB_FRACTION * cadence;
+      reason = `${cadence}R replenishing-wave budget`;
     } else {
       const phaseRounds = clamp(Math.round(safeFloat(targetRound, BOSS_TUNE_MAX_ROUNDS) * STATIC_MINION_PHASE_FRACTION), 1, 2);
       targetPool = partyDprVsMinions * phaseRounds;
       reason = `${phaseRounds}R static minion phase`;
     }
 
-    const newHp = Math.max(1, Math.round(targetPool / count));
-    if (Boolean(state.minion_replenish) && newHp * count >= partyDprVsMinions) {
-      return {
-        changes,
-        error: `Too many replenishing minions: ${count} minions at minimum 1 HP cannot be reliably cleared each round by ${partyDprVsMinions.toFixed(1)} expected DPR. Reduce minion count or disable replenish.`,
-      };
+    const newHp = Math.max(MINION_MIN_TUNED_HP, Math.round(targetPool / count));
+    if (Boolean(state.minion_replenish)) {
+      const cadence = clamp(safeInt(state.minion_replenish_every, 1), 1, 2);
+      if (newHp * count >= partyDprVsMinions * cadence) {
+        warnings.push(`${count} minions at ${newHp} HP cannot be fully cleared before the next ${cadence === 1 ? "round" : "every-other-round"} wave. Reduce minion count or AC if Clear First remains screened.`);
+      }
     }
 
     if (Math.abs(newHp - oldHp) > 0.005) {
@@ -2905,7 +3041,61 @@
       changes.push(`Minion HP: ${oldHp} -> ${newHp} (${reason})`);
     }
 
-    return { changes };
+    return { changes, warnings };
+  }
+
+  async function tuneMinionCadenceForSurvivability(tpkCap, configuredTrials) {
+    const changes = [];
+    const warnings = [];
+    if (Math.max(0, safeInt(state.minion_count, 0)) <= 0
+        || !Boolean(state.minion_replenish)
+        || clamp(safeInt(state.minion_replenish_every, 1), 1, 2) !== 1) {
+      return { changes, warnings };
+    }
+
+    const cap = clamp(safeFloat(tpkCap, 0.25), 0, MAX_TPK_WARNING_CAP);
+    const quickTrials = Math.min(
+      Math.max(1000, safeInt(configuredTrials, 10000)),
+      Math.max(2000, Math.floor(Math.max(1000, safeInt(configuredTrials, 10000)) * 0.25))
+    );
+    const runner = createEncounterWorkerRunner();
+    const runClearFirst = () => runner.run({
+      enc_trials: quickTrials,
+      minion_strategy: MINION_STRATEGY_CLEAR_FIRST,
+      minion_damage_mult: 0,
+    });
+
+    try {
+      let result = await runClearFirst();
+      if (result.error) {
+        warnings.push(`Clear-First cadence could not be validated: ${result.error}`);
+        return { changes, warnings };
+      }
+      if (result.tpkProb <= cap + 1e-9) return { changes, warnings };
+
+      const currentHp = Math.max(MINION_MIN_TUNED_HP, safeFloat(state.minion_hp, MINION_MIN_TUNED_HP));
+      if (currentHp > MINION_MIN_TUNED_HP) {
+        state.minion_hp = MINION_MIN_TUNED_HP;
+        changes.push(`Minion HP: ${round2(currentHp)} -> ${MINION_MIN_TUNED_HP} (Clear-First survivability floor)`);
+        result = await runClearFirst();
+      }
+
+      if (!result.error && result.tpkProb > cap + 1e-9) {
+        state.minion_replenish_every = 2;
+        changes.push(`Minion waves: every round -> every other round (Clear First exceeded ${formatPercent(cap)} TPK at ${MINION_MIN_TUNED_HP} HP)`);
+        result = await runClearFirst();
+      }
+
+      if (result.error) {
+        warnings.push(`Adjusted Clear-First cadence could not be validated: ${result.error}`);
+      } else if (result.tpkProb > cap + 1e-9) {
+        warnings.push(`Clear First still has ${formatPercent(result.tpkProb)} TPK risk with ${MINION_MIN_TUNED_HP} HP minions every other round; boss pressure or minion count must be adjusted manually.`);
+      }
+    } finally {
+      runner.close();
+    }
+
+    return { changes, warnings };
   }
 
   async function tuneMinionOffenseForBlitz(tpkCap, configuredTrials) {
@@ -2929,7 +3119,7 @@
       Math.max(2000, Math.floor(Math.max(1000, safeInt(configuredTrials, 10000)) * 0.25))
     );
     const maxScale = Math.min(...scalableValues.map((value) => 999 / value));
-    const cap = clamp(safeFloat(tpkCap, 0.05), 0, 1);
+    const cap = clamp(safeFloat(tpkCap, 0.25), 0, MAX_TPK_WARNING_CAP);
     const runner = createEncounterWorkerRunner();
     const runAtScale = (scale, strategy) => runner.run({
       enc_trials: quickTrials,
@@ -2939,15 +3129,35 @@
 
     let targetScale = 1;
     try {
-      const clearAtZero = await runAtScale(0, MINION_STRATEGY_CLEAR_FIRST);
+      let clearAtZero = await runAtScale(0, MINION_STRATEGY_CLEAR_FIRST);
       if (clearAtZero.error) {
         warnings.push(`Minion offense tuning could not validate Clear First: ${clearAtZero.error}`);
         return { changes, warnings };
       }
 
+      if (clearAtZero.tpkProb > cap + 1e-9
+          && Boolean(state.minion_replenish)
+          && clamp(safeInt(state.minion_replenish_every, 1), 1, 2) === 1) {
+        const currentHp = Math.max(MINION_MIN_TUNED_HP, safeFloat(state.minion_hp, MINION_MIN_TUNED_HP));
+        if (currentHp > MINION_MIN_TUNED_HP) {
+          state.minion_hp = MINION_MIN_TUNED_HP;
+          changes.push(`Minion HP: ${round2(currentHp)} -> ${MINION_MIN_TUNED_HP} (Clear First survivability floor)`);
+          clearAtZero = await runAtScale(0, MINION_STRATEGY_CLEAR_FIRST);
+        }
+        if (!clearAtZero.error && clearAtZero.tpkProb > cap + 1e-9) {
+          state.minion_replenish_every = 2;
+          changes.push(`Minion waves: every round -> every other round (Clear First exceeded ${formatPercent(cap)} TPK at ${MINION_MIN_TUNED_HP} HP)`);
+          clearAtZero = await runAtScale(0, MINION_STRATEGY_CLEAR_FIRST);
+        }
+        if (clearAtZero.error) {
+          warnings.push(`Adjusted minion cadence could not be validated: ${clearAtZero.error}`);
+          return { changes, warnings };
+        }
+      }
+
       let safeScale = 0;
       if (clearAtZero.tpkProb > cap + 1e-9) {
-        warnings.push(`Clear First exceeds the ${formatPercent(cap)} TPK warning cap even with minion offense removed; minion damage was reduced to zero but boss pressure still needs review.`);
+        warnings.push(`Clear First exceeds the ${formatPercent(cap)} TPK cap even with minion offense removed; minion damage was reduced to zero but boss pressure still needs review.`);
       } else {
         const clearAtMax = await runAtScale(maxScale, MINION_STRATEGY_CLEAR_FIRST);
         if (!clearAtMax.error && clearAtMax.tpkProb <= cap + 1e-9) {
@@ -2971,11 +3181,31 @@
         return { changes, warnings };
       }
 
+      let blitzAtSafe = null;
+      if (blitzAtZero.tpkProb > cap + 1e-9) {
+        safeScale = 0;
+        warnings.push(`Boss Blitz exceeds ${formatPercent(cap)} TPK even with minion offense removed; boss pressure will be capped in the final safety pass.`);
+      } else if (safeScale > 0) {
+        blitzAtSafe = await runAtScale(safeScale, MINION_STRATEGY_BOSS_BLITZ);
+        if (!blitzAtSafe.error && blitzAtSafe.tpkProb > cap + 1e-9) {
+          let lo = 0;
+          let hi = safeScale;
+          for (let i = 0; i < 12; i += 1) {
+            const mid = (lo + hi) / 2;
+            const result = await runAtScale(mid, MINION_STRATEGY_BOSS_BLITZ);
+            if (!result.error && result.tpkProb <= cap + 1e-9) lo = mid;
+            else hi = mid;
+          }
+          safeScale = lo;
+          blitzAtSafe = await runAtScale(safeScale, MINION_STRATEGY_BOSS_BLITZ);
+        }
+      }
+
       if (blitzAtZero.firstDownByDangerRound >= BLITZ_DANGER_PROBABILITY) {
         targetScale = 0;
         warnings.push(`Boss pressure alone already gives Boss Blitz a ${formatPercent(blitzAtZero.firstDownByDangerRound)} first-down chance by round ${BLITZ_DANGER_ROUND}; no minion increase was needed.`);
       } else {
-        const blitzAtSafe = await runAtScale(safeScale, MINION_STRATEGY_BOSS_BLITZ);
+        if (!blitzAtSafe) blitzAtSafe = await runAtScale(safeScale, MINION_STRATEGY_BOSS_BLITZ);
         if (blitzAtSafe.error || blitzAtSafe.firstDownByDangerRound < BLITZ_DANGER_PROBABILITY) {
           targetScale = safeScale;
           const achieved = blitzAtSafe.error ? 0 : blitzAtSafe.firstDownByDangerRound;
@@ -3017,10 +3247,13 @@
     if (r.firstDownRound != null) {
       const fd = Math.ceil(r.firstDownRound);
       setText(els.pacingFirstDown, String(fd));
-      applyMetricClass(els.pacingFirstDown, fd > targetFirstPcDangerRound(r.targetRounds) ? "warning" : "success");
+      applyMetricClass(
+        els.pacingFirstDown,
+        r.firstDownRound < FIRST_PC_DANGER_MIN_ROUND ? "danger" : r.firstDownRound > FIRST_PC_DANGER_MAX_ROUND ? "warning" : "success"
+      );
     } else {
       setText(els.pacingFirstDown, "∞");
-      applyMetricClass(els.pacingFirstDown, "success");
+      applyMetricClass(els.pacingFirstDown, "warning");
     }
 
     if (r.lastDownRound != null) {
@@ -3029,7 +3262,7 @@
       applyMetricClass(els.pacingPartyWipe, ld < targetPartyWipeMinRound(r.targetRounds) ? "danger" : ld > targetPartyWipeMaxRound(r.targetRounds) ? "warning" : "success");
     } else {
       setText(els.pacingPartyWipe, "∞");
-      applyMetricClass(els.pacingPartyWipe, "success");
+      applyMetricClass(els.pacingPartyWipe, "warning");
     }
     if (els.pacingPartyWipeSub) {
       const totalHealing = Math.max(0, safeFloat(state.party_healing_per_round, 0));
@@ -3045,9 +3278,10 @@
     const bossDprMult = Number.isFinite(r.bossDprMult) ? r.bossDprMult : 1;
     setText(els.pacingTargetDpr, `${bossDprMult.toFixed(2)}x`);
     const targetMultNote = Number.isFinite(r.targetBossDprMult) ? `pacing target: ${r.targetBossDprMult.toFixed(2)}x` : "pacing target: N/A";
-    const dprHint = r.toughestPcName
-      ? `${targetMultNote} · ${r.toughestPcName} budget ${targetPartyWipeRound(r.targetRounds).toFixed(1)}R`
-      : targetMultNote;
+    const budgetParts = [];
+    if (Number.isFinite(r.firstDownPressureMult)) budgetParts.push(`first-down ${r.firstDownPressureMult.toFixed(2)}x`);
+    if (Number.isFinite(r.wipePressureMult)) budgetParts.push(`wipe ${r.wipePressureMult.toFixed(2)}x`);
+    const dprHint = budgetParts.length ? `${targetMultNote} · ${budgetParts.join(" · ")}` : targetMultNote;
     setText(els.pacingTargetDprSub, dprHint);
 
     // Balance analysis
@@ -3073,16 +3307,26 @@
     let analysis = "";
 
     const mph = r.minionPhaseInfo;
-    if (mph && mph.replenishing && !mph.canClearPerRound) {
+    if (mph && mph.replenishing && !mph.canClearPerWave) {
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Clear-First Screened</span>`;
-      analysis = `On the Clear-First baseline, the replenishing pack permanently shields the boss because the party can't one-round it. ` +
-        `The party needs more than ${round2(mph.partyDprVsMinions)} effective DPR vs minion AC to break through. ` +
+      analysis = `On the Clear-First baseline, the replenishing pack permanently shields the boss because the party can't clear it before the next wave. ` +
+        `The current cadence is every ${mph.replenishEvery || 1} round(s), with ${round2(mph.partyDprVsMinions)} effective DPR vs minion AC. ` +
         `Boss Blitz can still reach the boss, but leaves the full pack attacking.`;
     } else if (r.effectivePartyDprOnBoss <= 0) {
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Cannot Kill Boss</span>`;
       analysis = "Party effective DPR on the boss is zero — check resistance factor, regen, and party DPR settings.";
+    } else if (r.firstDownRound != null && r.firstDownRound < FIRST_PC_DANGER_MIN_ROUND) {
+      cls = "bal-hard";
+      badge = `<span class="pacing-badge badge-hard">Early Casualty</span>`;
+      analysis = `Without healing, the first PC depletes at round ${fmt1(r.firstDownRound)}, before the round ${FIRST_PC_DANGER_MIN_ROUND}-${FIRST_PC_DANGER_MAX_ROUND} target. ` +
+        `The party's HP/defense spread may make the first-drop and full-collapse constraints conflict.`;
+    } else if (r.firstDownRound == null || r.firstDownRound > FIRST_PC_DANGER_MAX_ROUND) {
+      cls = "bal-warn";
+      badge = `<span class="pacing-badge badge-warn">Low Early Pressure</span>`;
+      analysis = `Without healing, no PC is projected to fall by round ${FIRST_PC_DANGER_MAX_ROUND}. ` +
+        `Increase boss pressure toward ${fmtMult(r.targetBossDprMult)}.`;
     } else if (partyWipe != null && partyWipe < N) {
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Very Hard</span>`;
@@ -3121,7 +3365,7 @@
     const resources = Math.max(0, safeInt(state.tight_cap_resources, 4));
     const target = targetEncounterRounds();
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `<div class="pacing-advice"><strong>Legendary Resistance HP pacing:</strong> Before round ${target}, the boss can burn one of ${resources} Legendary Resistances whenever a party round would remove more than ${capPct}% of max HP, capping that round at ${capPct}%. There is no hard HP floor. Protection ends at round ${target}; damage after that round escalates by ${antiSlog.toFixed(2)}x per round until the boss falls.</div>`;
+    return `<div class="pacing-advice"><strong>Boss HP pacing:</strong> The boss cannot fall before round ${BOSS_MINIMUM_SURVIVAL_ROUND}. Before round ${target}, it can also burn one of ${resources} Legendary Resistances whenever a party round would remove more than ${capPct}% of max HP, capping that round at ${capPct}%. Protection ends at round ${target}; damage after that round escalates by ${antiSlog.toFixed(2)}x per round until the boss falls.</div>`;
   }
 
   function tightPacingAdviceText() {
@@ -3130,7 +3374,7 @@
     const resources = Math.max(0, safeInt(state.tight_cap_resources, 4));
     const target = targetEncounterRounds();
     const antiSlog = clamp(safeFloat(state.tight_anti_slog_mult, 1.35), 1.0, 2.5);
-    return `\n\nLegendary Resistance HP pacing:\n- Before round ${target}, the boss has ${resources} Legendary Resistances available for HP pacing.\n- When a party round would remove more than ${capPct}% of max HP, it may burn one to cap that round's loss at ${capPct}%.\n- There is no hard minimum-round or 1 HP floor; the tuned HP carries the normal ${target}-round damage budget.\n- Protection ends at round ${target}. If the fight runs long, multiply post-target damage by ${antiSlog.toFixed(2)}x per round.`;
+    return `\n\nBoss HP pacing:\n- The boss cannot fall before round ${BOSS_MINIMUM_SURVIVAL_ROUND}, including under Boss Blitz.\n- Before round ${target}, the boss has ${resources} Legendary Resistances available for HP pacing.\n- When a party round would remove more than ${capPct}% of max HP, it may burn one to cap that round's loss at ${capPct}%.\n- The tuned HP still carries the normal ${target}-round damage budget.\n- Protection ends at round ${target}. If the fight runs long, multiply post-target damage by ${antiSlog.toFixed(2)}x per round.`;
   }
 
   function fmt1(n) {
@@ -3206,6 +3450,7 @@
     const totalPool = count * hpEach;
     const partyDprVsMinions = Math.max(0, expectedPartyDprVsEnemy(useNova, state.minion_ac));
     const replenish = Boolean(state.minion_replenish);
+    const replenishEvery = clamp(safeInt(state.minion_replenish_every, 1), 1, 2);
     const initiative = String(state.initiative_mode || "random");
     const strategy = normalizeMinionStrategy(minionStrategy);
     let poolHp = totalPool;
@@ -3217,8 +3462,11 @@
     }
 
     for (let round = 1; strategy === MINION_STRATEGY_CLEAR_FIRST && round <= wholeRounds; round += 1) {
-      if (replenish) poolHp = totalPool;
-      if (poolHp <= 0) break;
+      if (replenish && minionWaveSpawnsOnRound(round, replenishEvery)) poolHp = totalPool;
+      if (poolHp <= 0) {
+        if (replenish) continue;
+        break;
+      }
       const roundWeight = Math.min(1, Math.max(0, rounds - (round - 1)));
       const beforeParty = Math.ceil(poolHp / hpEach);
       const afterPool = Math.max(0, poolHp - partyDprVsMinions);
@@ -3290,55 +3538,63 @@
     const resist            = Math.max(1e-6, safeFloat(state.resist_factor, 1.0));
     const regen             = Math.max(0, safeFloat(state.boss_regen, 0.0));
     const replenish         = Boolean(state.minion_replenish);
+    const replenishEvery    = clamp(safeInt(state.minion_replenish_every, 1), 1, 2);
     const totalPool         = count * hpEach;
 
     const rows = [];
     let bossHp = Math.max(1, safeFloat(state.boss_hp, 150));
 
-    // ── Replenishing: full minion count respawns at the start of every round ─
+    // ── Replenishing waves ────────────────────────────────────────────────
     if (replenish) {
-      const minionTeamDpr = count * dprEach;
-      const canClear      = partyDprVsMinions >= totalPool;
+      const canClearPerRound = partyDprVsMinions >= totalPool;
+      const canClearPerWave = partyDprVsMinions * replenishEvery > totalPool;
+      let minionPoolHp = totalPool;
+      let totalBossDamage = 0;
+      let roundsToBoss = Infinity;
 
-      if (!canClear) {
-        // Party can't one-round the pack — boss is permanently screened.
-        for (let r = 1; r <= 5; r++) {
-          rows.push({
-            Round: r,
-            "Minions (replenish)": count,
-            "DPR vs Minions":      round2(partyDprVsMinions),
-            "Overflow to Boss":    0,
-            "Boss HP Left":        round2(bossHp),
-            "Minion Team DPR":     round2(minionTeamDpr),
-          });
-        }
-        return { rows, minionPhaseRounds: Infinity, bossHpAfterMinionPhase: bossHp,
-                 partyDprVsMinions, ratio, replenishing: true, canClearPerRound: false };
-      }
+      for (let round = 1; round <= 200; round += 1) {
+        const spawned = minionWaveSpawnsOnRound(round, replenishEvery);
+        if (spawned) minionPoolHp = totalPool;
+        const minionsAtStart = minionPoolHp > 0 ? Math.ceil(minionPoolHp / hpEach) : 0;
+        const minionTeamDpr = minionsAtStart * dprEach;
+        const damageToPool = Math.min(partyDprVsMinions, minionPoolHp);
+        const overflow = Math.max(0, partyDprVsMinions - damageToPool);
+        minionPoolHp = Math.max(0, minionPoolHp - partyDprVsMinions);
+        const rawBossOverflow = ratio > 0 && Number.isFinite(ratio) ? overflow / ratio : 0;
+        const bossDamage = Math.max(0, rawBossOverflow / resist - regen);
+        bossHp = Math.max(0, bossHp - bossDamage);
+        totalBossDamage += bossDamage;
 
-      // Party clears the full pack each round; excess spills to boss.
-      const overflowBoss = Math.max(0, ((partyDprVsMinions - totalPool) / ratio) / resist - regen);
-      if (overflowBoss <= 0) {
-        return { rows, minionPhaseRounds: Infinity, bossHpAfterMinionPhase: bossHp,
-                 overflowBossPerRound: 0, partyDprVsMinions, ratio,
-                 replenishing: true, canClearPerRound: true };
-      }
-      const roundsToBoss = Math.ceil(bossHp / overflowBoss);
-      const displayedRounds = Math.min(roundsToBoss, 200);
-      for (let round = 1; round <= displayedRounds; round += 1) {
-        bossHp = Math.max(0, bossHp - overflowBoss);
         rows.push({
           Round: round,
-          "Minions (replenish)": "0 (cleared)",
-          "DPR vs Minions":      round2(totalPool),
-          "Overflow to Boss":    round2(overflowBoss),
-          "Boss HP Left":        round2(bossHp),
-          "Minion Team DPR":     round2(minionTeamDpr),
+          "Wave": spawned ? `spawn (${replenishEvery}R)` : "no spawn",
+          "Minions Alive": minionPoolHp > 0 ? Math.ceil(minionPoolHp / hpEach) : 0,
+          "DPR vs Minions": round2(damageToPool),
+          "Overflow to Boss": round2(bossDamage),
+          "Boss HP Left": round2(bossHp),
+          "Minion Team DPR": round2(minionTeamDpr),
         });
+
+        if (bossHp <= 0) {
+          roundsToBoss = round;
+          break;
+        }
+        if (!canClearPerWave && round >= Math.max(5, replenishEvery * 2)) break;
       }
-      return { rows, minionPhaseRounds: roundsToBoss, bossHpAfterMinionPhase: 0,
-               overflowBossPerRound: overflowBoss, partyDprVsMinions, ratio,
-               replenishing: true, canClearPerRound: true };
+
+      return {
+        rows,
+        minionPhaseRounds: roundsToBoss,
+        bossHpAfterMinionPhase: bossHp,
+        totalBossDmgDuringPhase: totalBossDamage,
+        overflowBossPerRound: Number.isFinite(roundsToBoss) ? totalBossDamage / roundsToBoss : 0,
+        partyDprVsMinions,
+        ratio,
+        replenishing: true,
+        replenishEvery,
+        canClearPerRound,
+        canClearPerWave,
+      };
     }
 
     // ── Non-replenishing: pool depletes over multiple rounds ──────────────
@@ -4503,7 +4759,7 @@
     base.mc_show_hist = Boolean(base.mc_show_hist);
 
     base.enc_trials = Math.max(1000, safeInt(base.enc_trials, 10000));
-    base.enc_max_rounds = Math.max(1, safeInt(base.enc_max_rounds, 12));
+    base.enc_max_rounds = Math.max(1, safeInt(base.enc_max_rounds, 13));
     base.enc_use_nova = Boolean(base.enc_use_nova);
     base.dpr_cv = clamp(safeFloat(base.dpr_cv, 0.6), 0.05, 2.0);
     base.initiative_mode = ["random", "party_first", "boss_first"].includes(String(base.initiative_mode))
@@ -4515,7 +4771,7 @@
       pacing_rounds: hasPacingRounds ? base.pacing_rounds : base.tune_target_median,
       tune_target_median: base.tune_target_median,
     });
-    base.tune_tpk_cap  = clamp(safeFloat(base.tune_tpk_cap, 0.05), 0.0, 1.0);
+    base.tune_tpk_cap  = clamp(safeFloat(base.tune_tpk_cap, 0.25), 0.0, MAX_TPK_WARNING_CAP);
     base.tune_kill_rate = clamp(safeFloat(base.tune_kill_rate, 0.75), 0.50, 0.95);
     base.tune_band_max  = Math.max(0.5, safeFloat(base.tune_band_max, 3.0));
 
@@ -4532,6 +4788,7 @@
     base.minion_ac        = Math.max(1, safeInt(base.minion_ac, 14));
     base.minion_hp        = Math.max(1, safeFloat(base.minion_hp, 15));
     base.minion_replenish = Boolean(base.minion_replenish);
+    base.minion_replenish_every = clamp(safeInt(base.minion_replenish_every, 1), 1, 2);
 
     base.minion_atk_enabled = Boolean(base.minion_atk_enabled);
     base.minion_atk_bonus   = clamp(safeInt(base.minion_atk_bonus, 4), -10, 20);
@@ -4796,6 +5053,12 @@
       : MINION_STRATEGY_CLEAR_FIRST;
   }
 
+  function minionWaveSpawnsOnRound(roundNumber, cadence = 1) {
+    const round = Math.max(1, safeInt(roundNumber, 1));
+    const every = clamp(safeInt(cadence, 1), 1, 2);
+    return (round - 1) % every === 0;
+  }
+
   function targetEncounterRounds(source = state) {
     const src = source && typeof source === "object" ? source : {};
     const fallback = safeInt(src.tune_target_median, DEFAULT_STATE.tune_target_median);
@@ -4806,20 +5069,16 @@
     return clamp(targetEncounterRounds(source), BOSS_TUNE_MIN_ROUNDS, BOSS_TUNE_MAX_ROUNDS);
   }
 
-  function targetFirstPcDangerRound(targetRounds) {
-    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + FIRST_PC_DANGER_GRACE_ROUNDS;
+  function targetPartyWipeMinRound() {
+    return BOSS_TUNE_MAX_ROUNDS + TPK_GRACE_MIN_ROUNDS;
   }
 
-  function targetPartyWipeMinRound(targetRounds) {
-    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + TPK_GRACE_MIN_ROUNDS;
+  function targetPartyWipeMaxRound() {
+    return BOSS_TUNE_MAX_ROUNDS + TPK_GRACE_MAX_ROUNDS;
   }
 
-  function targetPartyWipeMaxRound(targetRounds) {
-    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + TPK_GRACE_MAX_ROUNDS;
-  }
-
-  function targetPartyWipeRound(targetRounds) {
-    return safeFloat(targetRounds, BOSS_TUNE_MAX_ROUNDS) + (TPK_GRACE_MIN_ROUNDS + TPK_GRACE_MAX_ROUNDS) / 2;
+  function targetPartyWipeRound() {
+    return BOSS_TUNE_MAX_ROUNDS + (TPK_GRACE_MIN_ROUNDS + TPK_GRACE_MAX_ROUNDS) / 2;
   }
 
   function round2(v) {
