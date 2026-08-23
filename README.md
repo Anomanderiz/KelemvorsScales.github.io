@@ -76,6 +76,8 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle. Every analysis runs the Boss-Blitz baseline and Minion-Clear comparison side by side, including separate survival curves, TTK distributions, casualty timing, and TPK risk.
 
+The Balancer display is split into two layers. **Deterministic Budget & Diagnostics** shows repeatable average-damage HP and pressure calculations used to propose the encounter. **Monte Carlo Validation** is the final authority for the configured probability goals and shows dedicated Boss-Blitz cards for win-by-target, unassisted first-down risk, TPK risk, and late TPK risk among fights still unresolved after the target round.
+
 Tune Everything treats durability and lethality as separate budgets. Boss HP is based on party DPR against the boss alone for a 7–10 round target, so Boss Blitz never makes the boss itself cheaper. With Boss HP Pacing enabled, the boss cannot fall before round 7; four Legendary Resistances also smooth exceptional pre-target burst.
 
 Encounter damage is calibrated on the Boss-Blitz baseline against two constraints: one PC reaching 0 HP around rounds 5–6 without healing (recurring THP still counts), and the last PC reaching 0 HP around rounds 12–13 with both recurring THP and supplied healing included. The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.

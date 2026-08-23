@@ -283,12 +283,14 @@
       "encTrials", "encMaxRounds", "encDprCv", "encInitiative", "encUseNova", "tightPacingEnabled",
       "tuneTpkCap", "tuneKillRate", "tuneBandMax",
       "btnRunEncounter", "btnAutoTuneAll",
+      "mcWinByTarget", "mcWinByTargetSub", "mcFirstDownByR6", "mcFirstDownByR6Sub",
+      "mcBossBlitzTpk", "mcBossBlitzTpkSub", "mcLateTpk", "mcLateTpkSub",
       "lblTtkMedian", "lblTtkP1090", "lblTpk", "lblDowns", "strategyComparisonTable",
       "survChart", "ttkChart",
       "reportText",
       "pacingRounds",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingFirstDownSub", "pacingPartyWipe", "pacingPartyWipeSub",
-      "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTableSummary", "pacingTable",
+      "pacingTargetDpr", "pacingTargetDprSub", "pacingDeterministicBalance", "pacingMcBalance", "pacingTableSummary", "pacingTable",
       "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish", "optMinionReplenishEvery",
       "optMinionAtkEnabled", "optMinionAtkBonus", "optMinionAtkAvg",
       "optMinionSaveEnabled", "optMinionSaveStat", "optMinionSaveDc", "optMinionSaveAvg", "optMinionSaveTargets",
@@ -1160,6 +1162,7 @@
 
     const clearSummary = summarizeEncounterStrategy(clearFirst, pacing.targetRounds);
     const blitzSummary = summarizeEncounterStrategy(bossBlitz, pacing.targetRounds);
+    renderMonteCarloGoalCards(blitzSummary, pacing.targetRounds);
     renderStrategyComparison(clearSummary, blitzSummary, pacing.targetRounds);
     renderTacticalVerdict(pacing, clearSummary, blitzSummary);
 
@@ -1232,6 +1235,18 @@
     const victoryRate = finiteTtk.length / total;
     const tpkProb = tpkFlags.filter(Boolean).length / total;
     const unresolvedRate = clamp(1 - victoryRate - tpkProb, 0, 1);
+    const lateHorizon = targetPartyWipeMaxRound(targetRound);
+    let ongoingAfterTarget = 0;
+    let lateTpks = 0;
+    for (let index = 0; index < metrics.ttk.length; index += 1) {
+      const victoryRound = metrics.ttk[index];
+      const wipeRound = metrics.tpkRound && metrics.tpkRound[index];
+      const victoryResolved = Number.isFinite(victoryRound) && victoryRound <= targetRound;
+      const wipeResolved = Number.isFinite(wipeRound) && wipeRound <= targetRound;
+      if (victoryResolved || wipeResolved) continue;
+      ongoingAfterTarget += 1;
+      if (Number.isFinite(wipeRound) && wipeRound <= lateHorizon) lateTpks += 1;
+    }
     return {
       medianTtk: finiteTtk.length ? percentile(finiteTtk, 50) : Infinity,
       p10: finiteTtk.length ? percentile(finiteTtk, 10) : Infinity,
@@ -1246,6 +1261,11 @@
         : finiteFirstDown.filter((value) => value <= BLITZ_DANGER_ROUND).length / total,
       tpkProb,
       unresolvedRate,
+      ongoingAfterTargetRate: ongoingAfterTarget / total,
+      ongoingAfterTargetCount: ongoingAfterTarget,
+      totalTrials: total,
+      lateTpkConditional: ongoingAfterTarget > 0 ? lateTpks / ongoingAfterTarget : null,
+      lateTpkHorizon: lateHorizon,
       medianWipeRound: finiteWipeRounds.length ? percentile(finiteWipeRounds, 50) : Infinity,
       medianBossHpOnFailure: failureBossHp.length ? percentile(failureBossHp, 50) : null,
       meanDowns: metrics.pcsDownAtVictory && metrics.pcsDownAtVictory.length ? meanOf(metrics.pcsDownAtVictory) : 0,
@@ -1275,6 +1295,32 @@
   function formatTpkCapStatus(clearSummary, blitzSummary) {
     const cap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     return `TPK cap: Boss Blitz ${formatPercent(blitzSummary.tpkProb)} · Minion Clear ${formatPercent(clearSummary.tpkProb)} · limit ${formatPercent(cap)}`;
+  }
+
+  function renderMonteCarloGoalCards(blitzSummary, targetRound) {
+    const winGoal = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
+    const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
+
+    setText(els.mcWinByTarget, formatPercent(blitzSummary.killByTarget));
+    setText(els.mcWinByTargetSub, `goal at least ${formatPercent(winGoal)} by R${targetRound}`);
+    applyMetricClass(els.mcWinByTarget, blitzSummary.killByTarget + 0.02 >= winGoal ? "success" : "warning");
+
+    setText(els.mcFirstDownByR6, formatPercent(blitzSummary.firstDownByDangerRound));
+    setText(els.mcFirstDownByR6Sub, `goal at least ${formatPercent(BLITZ_DANGER_PROBABILITY)} · refreshing THP · no healing`);
+    applyMetricClass(els.mcFirstDownByR6, blitzSummary.firstDownByDangerRound + 0.02 >= BLITZ_DANGER_PROBABILITY ? "success" : "warning");
+
+    setText(els.mcBossBlitzTpk, formatPercent(blitzSummary.tpkProb));
+    setText(els.mcBossBlitzTpkSub, `limit ${formatPercent(tpkCap)} by R${state.enc_max_rounds}`);
+    applyMetricClass(els.mcBossBlitzTpk, blitzSummary.tpkProb <= tpkCap + 1e-9 ? "success" : "danger");
+
+    const lateValue = blitzSummary.lateTpkConditional;
+    setText(els.mcLateTpk, lateValue == null ? "N/A" : formatPercent(lateValue));
+    setText(
+      els.mcLateTpkSub,
+      `TPK by R${blitzSummary.lateTpkHorizon} among trials still fighting after R${targetRound}` +
+        ` · ${blitzSummary.ongoingAfterTargetCount}/${blitzSummary.totalTrials} trials (${formatPercent(blitzSummary.ongoingAfterTargetRate)}) eligible`
+    );
+    applyMetricClass(els.mcLateTpk, null);
   }
 
   function monteCarloRecommendation(clearSummary, blitzSummary, targetRound) {
@@ -1335,8 +1381,8 @@
   }
 
   function renderTacticalVerdict(pacing, clearSummary, blitzSummary) {
-    if (!els.pacingBalance) return;
-    const el = els.pacingBalance;
+    if (!els.pacingMcBalance) return;
+    const el = els.pacingMcBalance;
     const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     const winByTargetGoal = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const hasMinions = Math.max(0, safeInt(state.minion_count, 0)) > 0;
@@ -1381,7 +1427,7 @@
       ? `<ul>${findingItems.map((text) => `<li>${text}</li>`).join("")}</ul>`
       : `<p>Boss durability, casualty pressure, and both strategy TPK rates are inside their configured targets.</p>`;
     el.className = `pacing-balance ${cls}`;
-    el.innerHTML = `${badge}<p>${durability}</p>${findings}${tightPacingAdviceHtml()}`;
+    el.innerHTML = `${badge}<p>${durability}</p>${findings}`;
   }
 
   async function runEncounterAndRender() {
@@ -3326,8 +3372,8 @@
   }
 
   function renderPacingBalance(r) {
-    if (!els.pacingBalance) return;
-    const el = els.pacingBalance;
+    if (!els.pacingDeterministicBalance) return;
+    const el = els.pacingDeterministicBalance;
     const N = r.targetRounds;
     const bossHp = r.currentBossHp;
     const recHp = r.recommendedBossHp;
@@ -4751,6 +4797,21 @@
     setText(els.lblDowns, "Run Full Analysis to validate the deterministic pacing preview.");
     if (els.strategyComparisonTable) {
       els.strategyComparisonTable.innerHTML = '<div class="table-empty">No current strategy simulation. Run Full Analysis.</div>';
+    }
+    setText(els.mcWinByTarget, "-");
+    setText(els.mcWinByTargetSub, "Run Full Analysis");
+    setText(els.mcFirstDownByR6, "-");
+    setText(els.mcFirstDownByR6Sub, "refreshing THP; no healing");
+    setText(els.mcBossBlitzTpk, "-");
+    setText(els.mcBossBlitzTpkSub, "Run Full Analysis");
+    setText(els.mcLateTpk, "-");
+    setText(els.mcLateTpkSub, "conditional diagnostic; run Full Analysis");
+    for (const metric of [els.mcWinByTarget, els.mcFirstDownByR6, els.mcBossBlitzTpk, els.mcLateTpk]) {
+      applyMetricClass(metric, null);
+    }
+    if (els.pacingMcBalance) {
+      els.pacingMcBalance.className = "pacing-balance";
+      els.pacingMcBalance.textContent = "Run Full Analysis for probability-based validation.";
     }
     clearChart("surv");
     clearChart("ttk");

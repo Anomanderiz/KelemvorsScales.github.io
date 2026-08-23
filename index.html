@@ -412,6 +412,11 @@
           </div>
         </div>
 
+        <div class="card analysis-heading analysis-heading-det">
+          <h2>1. Deterministic Budget &amp; Diagnostics</h2>
+          <p class="hint">Fast, repeatable average-damage calculations. These set the initial boss HP and damage budgets and explain sustain conflicts; they do not measure combat probability.</p>
+        </div>
+
         <div class="pacing-metrics">
           <div class="card metric-card">
             <div class="metric-label">Current Boss HP</div>
@@ -419,12 +424,12 @@
             <div class="metric-sub" id="pacingBossHpSub">exact target rounds</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">First PC at 0 HP</div>
+            <div class="metric-label">Avg-Damage: First PC at 0 HP</div>
             <div class="metric-value" id="pacingFirstDown">-</div>
             <div class="metric-sub" id="pacingFirstDownSub">current estimate · target R5–6</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">All PCs at 0 HP</div>
+            <div class="metric-label">Avg-Damage: Last PC at 0 HP</div>
             <div class="metric-value" id="pacingPartyWipe">-</div>
             <div class="metric-sub" id="pacingPartyWipeSub">with expected healing</div>
           </div>
@@ -436,14 +441,55 @@
         </div>
 
         <div class="card">
-          <h3>Balance Verdict</h3>
-          <div id="pacingBalance" class="pacing-balance">
-            Run analysis to combine exact pacing and Monte Carlo risk.
+          <h3>Deterministic Diagnostic</h3>
+          <div id="pacingDeterministicBalance" class="pacing-balance">
+            Calculating average-damage pacing.
           </div>
         </div>
 
         <div class="card">
-          <h3>Monte Carlo Validation</h3>
+          <h3>Boss-Blitz Average-Damage HP Timeline</h3>
+          <p class="hint" id="pacingTableSummary">Straight-line estimates for when each PC reaches 0 HP. Run Full Analysis for actual probabilities.</p>
+          <div id="pacingTable" class="table-mount"></div>
+        </div>
+
+        <div class="card analysis-heading analysis-heading-mc">
+          <h2>2. Monte Carlo Validation — Final Authority</h2>
+          <p class="hint">Randomized full encounters measure whether the actual probability targets are met. Boss Blitz is authoritative; Minion Clear is the secondary DM-facing comparison.</p>
+        </div>
+
+        <div class="pacing-metrics">
+          <div class="card metric-card">
+            <div class="metric-label">Boss-Blitz Win by Target</div>
+            <div class="metric-value" id="mcWinByTarget">-</div>
+            <div class="metric-sub" id="mcWinByTargetSub">Run Full Analysis</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Any PC at 0 HP by R6</div>
+            <div class="metric-value" id="mcFirstDownByR6">-</div>
+            <div class="metric-sub" id="mcFirstDownByR6Sub">refreshing THP; no healing</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Boss-Blitz TPK by Max Round</div>
+            <div class="metric-value" id="mcBossBlitzTpk">-</div>
+            <div class="metric-sub" id="mcBossBlitzTpkSub">Run Full Analysis</div>
+          </div>
+          <div class="card metric-card">
+            <div class="metric-label">Late TPK if Still Fighting</div>
+            <div class="metric-value" id="mcLateTpk">-</div>
+            <div class="metric-sub" id="mcLateTpkSub">conditional diagnostic</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Monte Carlo Verdict</h3>
+          <div id="pacingMcBalance" class="pacing-balance">
+            Run Full Analysis for probability-based validation.
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Detailed Monte Carlo Outcomes</h3>
           <p class="hint">Results are unconditional across every trial: party victory, party wipe, or still fighting at Max Rounds. Failure rows show how much boss HP typically remained, so even one-sided encounters produce actionable information.</p>
           <div class="stats-grid">
             <div id="lblTtkMedian" class="stat"></div>
@@ -467,11 +513,6 @@
           </div>
         </div>
 
-        <div class="card">
-          <h3>Boss-Blitz HP Timeline</h3>
-          <p class="hint" id="pacingTableSummary">Straight-line estimates for when each PC reaches 0 HP. Run Full Analysis for actual probabilities.</p>
-          <div id="pacingTable" class="table-mount"></div>
-        </div>
       </section>
 
       <!-- ══════════════════════════════════════════════════════

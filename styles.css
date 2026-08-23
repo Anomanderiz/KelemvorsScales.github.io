@@ -793,6 +793,17 @@ td select {
 }
 
 /* ── Pacing balance block ── */
+.analysis-heading {
+  margin-top: calc(var(--gap) * 1.5);
+  border-left: 4px solid var(--parchment);
+  background: linear-gradient(90deg, rgba(232,219,192,.08), rgba(7,7,10,.55) 45%);
+}
+.analysis-heading h2 { margin-bottom: 6px; }
+.analysis-heading-mc {
+  border-left-color: var(--gold);
+  background: linear-gradient(90deg, rgba(200,152,40,.10), rgba(7,7,10,.55) 45%);
+}
+
 .pacing-balance {
   padding: 14px 16px;
   border-radius: var(--radius-sm);
