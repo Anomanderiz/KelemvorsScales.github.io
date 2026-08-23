@@ -288,7 +288,7 @@
       "reportText",
       "pacingRounds",
       "pacingBossHp", "pacingBossHpSub", "pacingFirstDown", "pacingFirstDownSub", "pacingPartyWipe", "pacingPartyWipeSub",
-      "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTable",
+      "pacingTargetDpr", "pacingTargetDprSub", "pacingBalance", "pacingTableSummary", "pacingTable",
       "optMinionCount", "optMinionAc", "optMinionHp", "optMinionReplenish", "optMinionReplenishEvery",
       "optMinionAtkEnabled", "optMinionAtkBonus", "optMinionAtkAvg",
       "optMinionSaveEnabled", "optMinionSaveStat", "optMinionSaveDc", "optMinionSaveAvg", "optMinionSaveTargets",
@@ -2503,12 +2503,6 @@
 
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
-      const recurring = recurringBossDprPerPc(pc, attacks, legendary, targetRounds, partySize, state);
-      const rawPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, targetRounds);
-      const pcMinionDpr = minionDprVsPc(pc, targetRounds, useNova, strategy);
-      const rawBossIncomingPerPc = recurring.attackDpr + recurring.legendaryDpr + lairRechDpr + rawPhaseDpr;
-      const rawIncomingPerPc = rawBossIncomingPerPc + pcMinionDpr;
-      const totalDprPerPc = rawBossIncomingPerPc * dprMult + pcMinionDpr;
 
       const firstRecurring = recurringBossDprPerPc(pc, attacks, legendary, firstDangerRound, partySize, state);
       const firstPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, firstDangerRound);
@@ -2557,24 +2551,16 @@
 
       pcRows.push({
         PC: pc.Name || "?",
-        HP: pcHp,
-        AC: safeInt(pc.AC, 10),
-        "Base DPR/target": round2(rawIncomingPerPc),
-        "Legendary DPR": round2(recurring.legendaryDpr),
-        "Script DPR": round2(rawPhaseDpr),
-        "Minion DPR": round2(pcMinionDpr),
-        "Current DPR/target": round2(totalDprPerPc),
-        "Healing/R": round2(healingPerPc),
-        "Net DPR @ wipe horizon": round2(wipeNetDprPerPc),
-        "Unassisted depletion": formatProjectedRound(unassistedPcTtd, FIRST_PC_DANGER_MAX_ROUND),
-        "First-down mult": Number.isFinite(targetMultForFirstDanger) ? `${targetMultForFirstDanger.toFixed(2)}x` : "N/A",
-        "Wipe mult": Number.isFinite(targetMultForWipe) ? `${targetMultForWipe.toFixed(2)}x` : "N/A",
-        "Assisted depletion": formatProjectedRound(pcTtd, targetPartyWipeMaxRound()),
+        "HP / AC": `${pcHp} / ${safeInt(pc.AC, 10)}`,
+        "HP loss/R, no healing": round2(unassistedNetDprPerPc),
+        "At 0 HP, no healing": formatProjectedRound(unassistedPcTtd, FIRST_PC_DANGER_MAX_ROUND),
+        "HP loss/R, with healing": round2(wipeNetDprPerPc),
+        "At 0 HP, with healing": formatProjectedRound(pcTtd, targetPartyWipeMaxRound()),
       });
     }
 
-    // Satisfy both independent damage budgets: an unassisted first drop around
-    // R5-6, and assisted full-party depletion around R12-13 if the boss lives.
+    // Satisfy both independent damage budgets: one PC at 0 HP without healing
+    // around R5-6, and every PC at 0 HP with healing around R12-13.
     const firstPressure = Number.isFinite(firstDownPressureMult) ? firstDownPressureMult : 0;
     const wipePressure = Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0;
     targetBossDprMult = Math.max(firstPressure, wipePressure);
@@ -3327,6 +3313,15 @@
     renderPacingBalance(r);
 
     // Per-PC table
+    if (els.pacingTableSummary) {
+      const thpText = `${round2(r.thpAvg)} recurring THP per PC each round`;
+      const healingText = `${round2(r.healingPerPc)} expected healing per PC each round`;
+      els.pacingTableSummary.textContent =
+        `Straight-line Boss-Blitz estimates. “No healing” still includes ${thpText}. ` +
+        `“With healing” also includes ${healingText}. The goals are: one PC at 0 HP around R5–6, ` +
+        `and the last PC at 0 HP around R${targetPartyWipeMinRound(r.targetRounds)}–${targetPartyWipeMaxRound(r.targetRounds)}. ` +
+        `Run Full Analysis for actual probabilities and targeting variance.`;
+    }
     renderResultTable(els.pacingTable, r.pcRows);
   }
 
@@ -3373,12 +3368,12 @@
     } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > maxWipe + 1) {
       cls = "bal-easy";
       badge = `<span class="pacing-badge badge-easy">Very Easy</span>`;
-      analysis = `The boss-only HP budget targets R${N}, but assisted full-party depletion is beyond R${Math.floor(maxWipe)} at current pressure. ` +
+      analysis = `The boss-only HP budget targets R${N}, but the last PC does not reach 0 HP by R${Math.floor(maxWipe)} at current pressure. ` +
         `To add tension, increase boss DPR to ${fmtMult(r.targetBossDprMult)}.`;
     } else if (partyWipe != null && partyWipe <= maxWipe) {
       cls = "bal-ok";
       badge = `<span class="pacing-badge badge-ok">Balanced</span>`;
-      analysis = `The boss-only HP budget targets R${N}, and assisted full-party depletion is ${fmt1(partyWipe)}R. ` +
+      analysis = `The boss-only HP budget targets R${N}, and the last PC reaches 0 HP around R${fmt1(partyWipe)} with healing included. ` +
         `Recommended boss HP: ${recHp} (current: ${Math.round(bossHp)}).`;
     } else {
       cls = "bal-easy";
@@ -3426,7 +3421,7 @@
   }
 
   function projectionDetail(value, displayHorizon) {
-    if (!Number.isFinite(value)) return "no depletion at current pressure";
+    if (!Number.isFinite(value)) return "does not reach 0 HP at current pressure";
     const horizon = Math.max(1, safeFloat(displayHorizon, state.enc_max_rounds));
     return value > horizon + 1e-9
       ? `current beyond R${Math.floor(horizon)}`

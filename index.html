@@ -419,12 +419,12 @@
             <div class="metric-sub" id="pacingBossHpSub">exact target rounds</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">First-PC Depletion</div>
+            <div class="metric-label">First PC at 0 HP</div>
             <div class="metric-value" id="pacingFirstDown">-</div>
             <div class="metric-sub" id="pacingFirstDownSub">current estimate · target R5–6</div>
           </div>
           <div class="card metric-card">
-            <div class="metric-label">Full-Party Depletion</div>
+            <div class="metric-label">All PCs at 0 HP</div>
             <div class="metric-value" id="pacingPartyWipe">-</div>
             <div class="metric-sub" id="pacingPartyWipeSub">with expected healing</div>
           </div>
@@ -468,7 +468,8 @@
         </div>
 
         <div class="card">
-          <h3>Boss-Blitz Deterministic Pressure</h3>
+          <h3>Boss-Blitz HP Timeline</h3>
+          <p class="hint" id="pacingTableSummary">Straight-line estimates for when each PC reaches 0 HP. Run Full Analysis for actual probabilities.</p>
           <div id="pacingTable" class="table-mount"></div>
         </div>
       </section>

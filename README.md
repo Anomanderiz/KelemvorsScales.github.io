@@ -78,7 +78,7 @@ Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use
 
 Tune Everything treats durability and lethality as separate budgets. Boss HP is based on party DPR against the boss alone for a 7–10 round target, so Boss Blitz never makes the boss itself cheaper. With Boss HP Pacing enabled, the boss cannot fall before round 7; four Legendary Resistances also smooth exceptional pre-target burst.
 
-Encounter damage is calibrated on the Boss-Blitz baseline against two constraints: an unassisted first PC depletion around rounds 5–6 (THP counts, healing does not) and assisted full-party depletion around rounds 12–13 if the boss survives past round 10 (both THP and supplied healing count). The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.
+Encounter damage is calibrated on the Boss-Blitz baseline against two constraints: one PC reaching 0 HP around rounds 5–6 without healing (recurring THP still counts), and the last PC reaching 0 HP around rounds 12–13 with both recurring THP and supplied healing included. The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.
 
 Replenishing minions support one- or two-round wave cadence. Auto-tuning never reduces them below 20 HP. If an every-round Minion-Clear comparison is still over the TPK ceiling at 20 HP, their wave cadence shifts to every other round before boss HP is touched.
 
