@@ -940,3 +940,9 @@ td select {
 .lr-plan ul { margin: 8px 0; }
 #encounterCheckVerdict .pacing-advice { color: var(--text-soft); }
 #encounterCheckPacing .lr-plan { color: var(--text); border-top: none; }
+.check-pcs { margin: 12px 0; }
+.check-pcs ul { list-style: none; padding: 0; margin: 6px 0 8px; max-width: 560px; }
+.check-pcs li { display: grid; grid-template-columns: minmax(110px, 1fr) 2fr 3em; align-items: center; gap: 10px; padding: 3px 0; }
+.check-pcs .pc-bar { height: 8px; border-radius: 4px; background: var(--line-subtle); overflow: hidden; }
+.check-pcs .pc-bar > span { display: block; height: 100%; background: var(--gold); }
+.check-pcs .pc-pct { text-align: right; font-variant-numeric: tabular-nums; }

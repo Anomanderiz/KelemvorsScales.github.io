@@ -76,7 +76,7 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle. Every analysis runs the Boss-Blitz baseline and Minion-Clear comparison side by side, including separate survival curves, TTK distributions, casualty timing, and TPK risk.
 
-The Balancer checks two goals by simulating thousands of fights: by the end of round 6 a PC is down or at 25% HP or less without healing (in at least 75% of fights), and the boss dies no earlier than round 6 and no later than round 11 (each miss allowed in at most 10% of fights). The **Encounter Check** card states each goal in plain language with a ✓/✗, says what is wrong and how to fix it, and shows two charts: the round the boss dies, and how quickly a PC gets near death. The older average-damage estimates and raw simulation panels are collapsed underneath; the average-damage view is unreliable when PCs get large refreshing temporary HP.
+The Balancer checks two goals by simulating thousands of fights: by the end of round 6 a PC is down or at 25% HP or less without healing (in at least 75% of fights), and the boss dies no earlier than round 6 and no later than round 11 (each miss allowed in at most 10% of fights). The **Encounter Check** card states each goal in plain language with a ✓/✗, says what is wrong and how to fix it, and shows two charts: the round the boss dies, and how quickly a PC gets near death. Bars below show each PC's own chance to be near death by round 6; when one PC stands out, it also says how often someone else is. The older average-damage estimates and raw simulation panels are collapsed underneath; the average-damage view is unreliable when PCs get large refreshing temporary HP.
 
 Tune Everything first scales boss damage (and bakes it into the stat block) until a PC is near death by round 6 in about 75% of fights. It then measures how much damage the party deals by each round and picks the boss HP that best keeps the fight between rounds 6 and 11. If no HP can do both, because party damage swings too much, it turns on **Legendary Resistance pacing**: at the start of rounds 2–6, if the boss is below a listed HP (the pace that would kill it before round 7), it burns one of 3 Legendary Resistances for resistance to all damage until the next round. The Encounter Check lists those HP thresholds round by round and how often each burn happens. It runs two passes so the damage check accounts for bosses that die during round 6.
 
@@ -150,7 +150,7 @@ Initiative: if the boss acts first, PCs might lose actions that round if they dr
 
 Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. Refreshing THP (e.g. `1d6+8` for a cleric's aura) is rolled for each PC every round; it does not stack, and a higher roll replaces leftover THP. Expected healing is entered as a party total and divided evenly across active PCs.
 
-Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules. Minion Clear reduces the number of acting minions as the pack takes damage; Boss Blitz leaves the full configured count active until the boss dies.
+Targeting: every individual attack use independently selects a random living PC, weighted by each PC's **Target Wt** (1 = normal, 0.5 = half as often, 0 = only once everyone else is down). Lowering a fragile PC's weight models them staying out of reach: the attacks go to the rest of the party instead. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules. Minion Clear reduces the number of acting minions as the pack takes damage; Boss Blitz leaves the full configured count active until the boss dies.
 
 Balancing playbook
 
@@ -192,7 +192,7 @@ Re-run until guardrails show âœ“.
   - `P(â‰¥ K PCs down at victory) â‰ˆ target` (lethality band)
   - `P(TPK) â‰¤ cap`
 - **Charts:** cumulative party victories and wipes by round, plus the unconditional final outcome mix for both strategies.
-- **Per-use targeting:** every attack independently samples from **all living PCs**; each save ability samples its configured number of distinct targets. Minions use the same rules.
+- **Per-use targeting:** every attack independently samples from **all living PCs**, weighted by each PC's Target Wt; each save ability samples its configured number of distinct targets. Minions, lair actions and recharge powers use the same rules.
 - **Crunchy crits:** crit = *max dice + one rolled* (modifier once) for attack rolls; save-based effects donâ€™t crit (RAW).
 
 ---

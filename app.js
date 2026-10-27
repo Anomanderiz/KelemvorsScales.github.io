@@ -142,6 +142,7 @@
     { key: "INT", label: "INT", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "WIS", label: "WIS", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "CHA", label: "CHA", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
+    { key: "Target Weight", label: "Target Wt", type: "number", step: "0.25", min: "0", parser: (v) => clamp(safeFloat(v, 1), 0, 10) },
   ];
 
   const DPR_COLUMNS = [
@@ -372,7 +373,7 @@
 
   function bindButtons() {
     els.btnAddPartyRow.addEventListener("click", () => {
-      state.party_table.push({ Name: "New PC", AC: 16, HP: 35, STR: 0, DEX: 0, CON: 0, INT: 0, WIS: 0, CHA: 0 });
+      state.party_table.push({ Name: "New PC", AC: 16, HP: 35, STR: 0, DEX: 0, CON: 0, INT: 0, WIS: 0, CHA: 0, "Target Weight": 1 });
       syncPartyDependentRows(state);
       persistState();
       renderPartySection();
@@ -1016,10 +1017,8 @@
     const mechanics = phaseMechanicsEnabledFromTable(state.phase_table);
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const dprMult = bossDprMultiplier(state);
-    const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(state, party.length);
-    const partySize = Math.max(1, party.length);
     const horizonRounds = Math.max(1, targetPartyWipeMaxRound());
 
     const rows = [];
@@ -1027,8 +1026,10 @@
     const chartValues = [];
 
     for (const pc of party) {
-      const recurring = recurringBossDprPerPc(pc, attacks, legendary, horizonRounds, partySize, state);
-      const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, horizonRounds);
+      const targetDiv = pcTargetDivisor(pc, party);
+      const lairRechDpr = lairPerTargetDpr(state, targetDiv) + rechargePerTargetDpr(state, targetDiv);
+      const recurring = recurringBossDprPerPc(pc, attacks, legendary, horizonRounds, targetDiv, state);
+      const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, targetDiv, horizonRounds);
       const minionDpr = minionDprVsPc(pc, horizonRounds, Boolean(state.enc_use_nova), MINION_STRATEGY_BOSS_BLITZ);
       const total = (recurring.attackDpr + recurring.legendaryDpr + lairRechDpr + phaseDpr) * dprMult + minionDpr;
       const net = Math.max(0, total - thpAvg - healingPerPc);
@@ -1860,7 +1861,9 @@
         boss_dpr_mult: mult,
         enc_trials: trials,
         enc_max_rounds: BLITZ_DANGER_ROUND,
-        tight_pacing_enabled: false,
+        // Pacing keeps more bosses alive into round 6, which adds danger; the
+        // unkillable probe never triggers it, so this only matters on pass 2.
+        tight_pacing_enabled: Boolean(state.tight_pacing_enabled),
         minion_strategy: MINION_STRATEGY_BOSS_BLITZ,
       });
       if (result.error) throw new Error(result.error);
@@ -2094,10 +2097,38 @@
       `<p class="check-headline">${headline}</p>${problemList}` +
       `<ul class="check-goals">${goals.join("")}</ul>` +
       `<p>${typical}${firstInDanger ? ` ${firstInDanger}` : ""}</p>` +
-      tuneHtml + minionNote;
+      perPcDangerHtml(metrics) + tuneHtml + minionNote;
 
     drawEncounterCheckCharts(metrics);
     renderLrSchedule(metrics);
+  }
+
+  // Bars for each PC's chance to be near death by the danger round, plus the
+  // danger goal with the most at-risk PC left out.
+  function perPcDangerHtml(metrics) {
+    const rates = metrics.pcNearDownByDangerRate || [];
+    const party = activePartyRows(state);
+    if (!rates.length || rates.length !== party.length) return "";
+    const pct = (v) => `${Math.round(100 * clamp(v, 0, 1))}%`;
+    const rows = party
+      .map((pc, j) => ({ name: pc.Name || `PC ${j + 1}`, weight: pcTargetWeight(pc), rate: rates[j], j }))
+      .sort((a, b) => b.rate - a.rate);
+    const items = rows.map((row) => {
+      const weightNote = row.weight !== 1 ? ` <span class="hint">(weight ${row.weight})</span>` : "";
+      return `<li><span class="pc-name">${row.name}${weightNote}</span>` +
+        `<span class="pc-bar"><span style="width:${(100 * clamp(row.rate, 0, 1)).toFixed(1)}%"></span></span>` +
+        `<span class="pc-pct">${pct(row.rate)}</span></li>`;
+    }).join("");
+    // Only worth saying when one PC stands out from the rest.
+    let without = "";
+    const top = rows[0];
+    const others = (metrics.nearDownByDangerWithoutPc || [])[top.j];
+    if (rows.length > 1 && Number.isFinite(others) && top.rate >= 1.5 * rows[1].rate) {
+      without = `<p>Not counting ${top.name}, another PC is near death by round ${BLITZ_DANGER_ROUND} in <strong>${pct(others)}</strong> of fights` +
+        ` (danger goal: ${pct(DANGER_GOAL_PROBABILITY)}).</p>`;
+    }
+    return `<div class="check-pcs"><p><strong>Chance each PC is down or below ${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP by the end of round ${BLITZ_DANGER_ROUND}</strong> (no healing):</p>` +
+      `<ul>${items}</ul>${without}</div>`;
   }
 
   function firstInDangerSentence(metrics) {
@@ -2234,7 +2265,7 @@
     }
     const thpAvg = Math.max(0, averageDamage(opts.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(opts, activePartySize(opts));
-    const partySize = activePartySize(opts);
+    const partySize = pcTargetDivisor(pcRow, activePartyRows(opts));
     const dprMult = bossDprMultiplier(opts);
 
     const totalDamage = new Array(trials).fill(0);
@@ -2444,6 +2475,14 @@
     const firstNearDownRoundUnassisted = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const firstNearDownPc = new Array(trials).fill(-1);
     const pcNearDownHp = party.map((pc) => Math.max(1, safeFloat(pc.HP, 1)) * NEAR_DOWN_HP_FRACTION);
+    // Per PC: reached the near-down line (no healing) by the danger round.
+    const pcsNearDownByDanger = Array.from({ length: trials }, () => new Array(P).fill(false));
+    const pcWeight = party.map(pcTargetWeight);
+    const weightedTargeting = pcWeight.some((w) => w !== pcWeight[0]);
+    const pickTargets = (pool, k) => {
+      if (weightedTargeting) return sampleWeightedTargets(pool, k, pcWeight);
+      return k === 1 ? [pool[randomInt(0, pool.length - 1)]] : sampleWithoutReplacement(pool, k);
+    };
     const tpkRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const tpkFlags = new Array(trials).fill(false);
     const pcsDownAtVictory = new Array(trials).fill(0);
@@ -2599,6 +2638,9 @@
               firstNearDownRoundUnassisted[t] = rnd;
               firstNearDownPc[t] = target;
             }
+            if (rnd <= BLITZ_DANGER_ROUND && pcsHpUnassisted[t][target] <= pcNearDownHp[target]) {
+              pcsNearDownByDanger[t][target] = true;
+            }
           }
           const healed = Math.min(afterThp, healingPool[target]);
           healingPool[target] -= healed;
@@ -2625,14 +2667,14 @@
             const alivePool = aliveIndicesForTrial(pcsAlive[t]);
             if (!alivePool.length) break;
             const a = pickSlotAttack(slot, attacks, usedThisRound, attackUsesRemaining[t],
-              (idx) => attackUseValue(attacks[idx], attackValueVsPc[idx], alivePool));
+              (idx) => attackUseValue(attacks[idx], attackValueVsPc[idx], alivePool, pcWeight));
             if (a < 0) break;
             const atk = attacks[a];
             usedThisRound[a] += 1;
             attackUsesRemaining[t][a] -= 1;
-            const targets = atk.kind === "save"
-              ? sampleWithoutReplacement(alivePool, Math.min(Math.max(1, safeInt(atk.targets, 1)), alivePool.length))
-              : [alivePool[randomInt(0, alivePool.length - 1)]];
+            const targets = pickTargets(alivePool, atk.kind === "save"
+              ? Math.min(Math.max(1, safeInt(atk.targets, 1)), alivePool.length)
+              : 1);
 
             for (const target of targets) {
               let rawDealt = 0;
@@ -2670,9 +2712,9 @@
         for (const action of legendary) {
           const alivePool = aliveIndicesForTrial(pcsAlive[t]);
           if (!alivePool.length) break;
-          const targets = action.kind === "save"
-            ? sampleWithoutReplacement(alivePool, Math.min(Math.max(1, safeInt(action.targets, 1)), alivePool.length))
-            : [alivePool[randomInt(0, alivePool.length - 1)]];
+          const targets = pickTargets(alivePool, action.kind === "save"
+            ? Math.min(Math.max(1, safeInt(action.targets, 1)), alivePool.length)
+            : 1);
           for (const target of targets) {
             const rawDealt = rollBossActionDamageForTarget(action, target, currentAc, currentMode, pcSaves, saveIndex);
             applyDamage(target, Math.max(0, rawDealt * dprMult));
@@ -2684,7 +2726,7 @@
           if (!aliveNow.length) break;
 
           const targetCount = Math.min(Math.max(1, safeInt(mech.targets, 1)), aliveNow.length);
-          const targets = sampleWithoutReplacement(aliveNow, targetCount);
+          const targets = pickTargets(aliveNow, targetCount);
           for (const target of targets) {
             const rawDealt = rollMechanicDamageForTarget(mech, target, currentAc, currentMode, pcSaves, saveIndex);
             applyDamage(target, Math.max(0, rawDealt * dprMult));
@@ -2695,7 +2737,7 @@
           aliveNow = aliveIndicesForTrial(pcsAlive[t]);
           if (aliveNow.length) {
             const L = Math.min(Math.max(1, safeInt(opts.lair_targets, 1)), aliveNow.length);
-            const targets = sampleWithoutReplacement(aliveNow, L);
+            const targets = pickTargets(aliveNow, L);
             for (const idx of targets) {
               applyDamage(idx, Math.max(0, rollDamageOne(opts.lair_formula || damageFormulaForAverage(opts.lair_avg, 6)) * dprMult));
             }
@@ -2708,7 +2750,7 @@
             aliveNow = aliveIndicesForTrial(pcsAlive[t]);
             if (aliveNow.length) {
               const R = Math.min(Math.max(1, safeInt(opts.rech_targets, 1)), aliveNow.length);
-              const targets = sampleWithoutReplacement(aliveNow, R);
+              const targets = pickTargets(aliveNow, R);
               for (const idx of targets) {
                 applyDamage(idx, Math.max(0, rollDamageOne(opts.rech_formula || damageFormulaForAverage(opts.rech_avg, 6)) * dprMult));
               }
@@ -2723,7 +2765,7 @@
             if (opts.minion_atk_enabled) {
               aliveNow = aliveIndicesForTrial(pcsAlive[t]);
               if (!aliveNow.length) break;
-              const idx = aliveNow[randomInt(0, aliveNow.length - 1)];
+              const idx = pickTargets(aliveNow, 1)[0];
               const raw = sampleMinionAttackDamageVsPc(idx, pcAc, opts);
               applyDamage(idx, Math.max(0, raw * minionDamageMult));
             }
@@ -2732,7 +2774,7 @@
               aliveNow = aliveIndicesForTrial(pcsAlive[t]);
               if (!aliveNow.length) break;
               const targetCount = Math.min(Math.max(1, safeInt(opts.minion_save_targets, 1)), aliveNow.length);
-              const targets = sampleWithoutReplacement(aliveNow, targetCount);
+              const targets = pickTargets(aliveNow, targetCount);
               for (const idx of targets) {
                 const raw = sampleMinionSaveDamageVsPc(idx, pcSaves, saveIndex, opts);
                 applyDamage(idx, Math.max(0, raw * minionDamageMult));
@@ -2773,6 +2815,20 @@
       ttk.length > 0 ? ttk.filter((v) => v > round).length / ttk.length : 0
     );
 
+    // Chance each PC is near down by the danger round, and chance some other
+    // PC is (so one fragile PC can be set aside when reading the danger goal).
+    const pcNearDownByDangerRate = new Array(P).fill(0);
+    const nearDownByDangerWithoutPc = new Array(P).fill(0);
+    for (let t = 0; t < trials; t += 1) {
+      const flags = pcsNearDownByDanger[t];
+      let count = 0;
+      for (let j = 0; j < P; j += 1) if (flags[j]) count += 1;
+      for (let j = 0; j < P; j += 1) {
+        if (flags[j]) pcNearDownByDangerRate[j] += 1 / trials;
+        if (count - (flags[j] ? 1 : 0) > 0) nearDownByDangerWithoutPc[j] += 1 / trials;
+      }
+    }
+
     const downFinite = [];
     for (let i = 0; i < ttk.length; i += 1) {
       if (Number.isFinite(ttk[i])) {
@@ -2798,6 +2854,8 @@
       damageByRound,
       firstNearDownRound: firstNearDownRoundUnassisted,
       firstNearDownPc,
+      pcNearDownByDangerRate,
+      nearDownByDangerWithoutPc,
       lrBurnRateByRound: lrBurnsByRound.map((count) => count / trials),
       lrMeanUsed: lrPacing ? meanOf(lrLeft.map((left) => LR_PACING_BUDGET - left)) : 0,
     };
@@ -2861,8 +2919,6 @@
     const party = state.party_table.filter((r) => String(r.Name || "").trim().length > 0);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(state, party.length);
-    const partySize = Math.max(1, party.length);
-    const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
     const dprMult = bossDprMultiplier(state);
 
     let firstDownRound = Infinity;
@@ -2877,18 +2933,20 @@
     const pcRows = [];
 
     for (const pc of party) {
+      const targetDiv = pcTargetDivisor(pc, party);
+      const lairRechDpr = lairPerTargetDpr(state, targetDiv) + rechargePerTargetDpr(state, targetDiv);
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
 
-      const firstRecurring = recurringBossDprPerPc(pc, attacks, legendary, dangerRound, partySize, state);
-      const firstPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, dangerRound);
+      const firstRecurring = recurringBossDprPerPc(pc, attacks, legendary, dangerRound, targetDiv, state);
+      const firstPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, targetDiv, dangerRound);
       const firstMinionDpr = minionDprVsPc(pc, dangerRound, useNova, strategy);
       const firstRawBossDpr = firstRecurring.attackDpr + firstRecurring.legendaryDpr + lairRechDpr + firstPhaseDpr;
       const unassistedNetDprPerPc = Math.max(0, firstRawBossDpr * dprMult + firstMinionDpr - thpAvg);
       const unassistedPcTtd = unassistedNetDprPerPc > 0 ? pcHp / unassistedNetDprPerPc : Infinity;
       const nearDownRound = unassistedNetDprPerPc > 0 ? pcHp * (1 - NEAR_DOWN_HP_FRACTION) / unassistedNetDprPerPc : Infinity;
 
-      const wipeRecurring = recurringBossDprPerPc(pc, attacks, legendary, wipeHorizon, partySize, state);
-      const wipePhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, wipeHorizon);
+      const wipeRecurring = recurringBossDprPerPc(pc, attacks, legendary, wipeHorizon, targetDiv, state);
+      const wipePhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, targetDiv, wipeHorizon);
       const wipeMinionDpr = minionDprVsPc(pc, wipeHorizon, useNova, strategy);
       const wipeRawBossDpr = wipeRecurring.attackDpr + wipeRecurring.legendaryDpr + lairRechDpr + wipePhaseDpr;
       const wipeNetDprPerPc = Math.max(0, wipeRawBossDpr * dprMult + wipeMinionDpr - thpAvg - healingPerPc);
@@ -2950,7 +3008,6 @@
       bossDprMult: dprMult,
       currentBossHp: safeFloat(state.boss_hp, 200),
       pcRows,
-      lairRechDpr,
       thpAvg,
       healingPerPc,
     };
@@ -2974,16 +3031,16 @@
     const dprMult = clamp(safeFloat(mult, 1), 0, 20);
     const thpAvg = Math.max(0, averageDamage(state.thp_expr || "0"));
     const healingPerPc = partyHealingPerPc(state, party.length);
-    const partySize = Math.max(1, party.length);
     const rounds = Math.max(1, safeFloat(horizonRounds, 5));
-    const lairRechDpr = lairPerTargetDpr(state, party.length || 1) + rechargePerTargetDpr(state, party.length || 1);
 
     let lastDown = 0;
     let anyFinite = false;
     for (const pc of party) {
+      const targetDiv = pcTargetDivisor(pc, party);
+      const lairRechDpr = lairPerTargetDpr(state, targetDiv) + rechargePerTargetDpr(state, targetDiv);
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
-      const recurring = recurringBossDprPerPc(pc, attacks, legendary, rounds, partySize, state);
-      const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, rounds);
+      const recurring = recurringBossDprPerPc(pc, attacks, legendary, rounds, targetDiv, state);
+      const phaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, targetDiv, rounds);
       const minionDpr = minionDprVsPc(pc, rounds, Boolean(state.enc_use_nova), MINION_STRATEGY_BOSS_BLITZ);
       const rawBossIncoming = recurring.attackDpr + recurring.legendaryDpr + phaseDpr + lairRechDpr;
       const net = Math.max(0, rawBossIncoming * dprMult + minionDpr - thpAvg - healingPerPc);
@@ -3428,7 +3485,7 @@
   function minionDprVsPc(pcRow, horizonRounds = 1, useNova = Boolean(state.enc_use_nova), minionStrategy = MINION_STRATEGY_BOSS_BLITZ) {
     const count = activeMinionCount(state);
     if (count <= 0) return 0;
-    const partySize = state.party_table.filter((r) => String(r.Name || "").trim().length > 0).length || 1;
+    const partySize = pcTargetDivisor(pcRow, activePartyRows(state));
     const rounds = Math.max(1, safeFloat(horizonRounds, 1));
     const hpEach = Math.max(1, safeFloat(state.minion_hp, 15));
     const totalPool = count * hpEach;
@@ -3856,7 +3913,7 @@
   }
 
   function perRoundDprVsPc(pcRow, mode, attacks, attackUses, partySize = 1) {
-    const pSize = Math.max(1, safeInt(partySize, 1));
+    const pSize = Math.max(1, safeFloat(partySize, 1));
     let total = 0;
 
     for (let a = 0; a < attacks.length; a += 1) {
@@ -3875,7 +3932,7 @@
 
   function recurringBossDprPerPc(pcRow, attacks, legendary, horizonRounds, partySize, source = state) {
     const rounds = Math.max(1, safeFloat(horizonRounds, 1));
-    const pSize = Math.max(1, safeInt(partySize, 1));
+    const pSize = Math.max(1, safeFloat(partySize, 1));
     const baseMode = String(source.mode_select || "normal");
     const budget = source.legendary_action_budget;
     const attackUses = expectedAttackUses(attacks, rounds, activePartyRows(source), baseMode);
@@ -3942,14 +3999,25 @@
     return expectedAttackDamage(Math.max(1, safeInt(pcRow.AC, 10)), atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold);
   }
 
-  // Party-wide expected damage of one use: mean per-target damage over the
-  // candidate PCs times the number of PCs that use reaches.
-  function attackUseValue(atk, perPcValues, candidates) {
+  // Party-wide expected damage of one use: per-target damage averaged over the
+  // candidate PCs (weighted by how likely each is to be targeted) times the
+  // number of PCs that use reaches.
+  function attackUseValue(atk, perPcValues, candidates, weights = null) {
     if (!candidates.length) return 0;
     let sum = 0;
-    for (const j of candidates) sum += perPcValues[j];
+    let weightSum = 0;
+    for (const j of candidates) {
+      const w = weights ? weights[j] : 1;
+      sum += perPcValues[j] * w;
+      weightSum += w;
+    }
+    if (weightSum <= 0) {
+      sum = 0;
+      for (const j of candidates) sum += perPcValues[j];
+      weightSum = candidates.length;
+    }
     const reach = atk.kind === "save" ? Math.min(candidates.length, Math.max(1, safeInt(atk.targets, 1))) : 1;
-    return (sum / candidates.length) * reach;
+    return (sum / weightSum) * reach;
   }
 
   // Rows sharing a Combo Group form one "any combination" multiattack slot:
@@ -4004,7 +4072,7 @@
         .map((a) => ({
           a,
           value: slot.members.length > 1
-            ? attackUseValue(attacks[a], partyRows.map((pc) => expectedAttackVsPc(attacks[a], pc, mode)), candidates)
+            ? attackUseValue(attacks[a], partyRows.map((pc) => expectedAttackVsPc(attacks[a], pc, mode)), candidates, partyRows.map(pcTargetWeight))
             : 0,
         }))
         .sort((x, y) => y.value - x.value);
@@ -4023,6 +4091,47 @@
     return ((source && source.party_table) || []).filter((r) => String((r && r.Name) || "").trim().length > 0);
   }
 
+  // How likely enemies are to pick this PC relative to the others: 1 = normal,
+  // 0.5 = hard to reach, 0 = only targeted once no one else is standing.
+  function pcTargetWeight(pcRow) {
+    return clamp(safeFloat(pcRow && pcRow["Target Weight"], 1), 0, 10);
+  }
+
+  // Party-size equivalent for one PC's share of single-target attacks: equal
+  // weights give the party size, so 1 / divisor is the PC's chance to be picked.
+  function pcTargetDivisor(pcRow, partyRows) {
+    const total = partyRows.reduce((acc, row) => acc + pcTargetWeight(row), 0);
+    if (total <= 0) return Math.max(1, partyRows.length);
+    const weight = pcTargetWeight(pcRow);
+    return weight > 0 ? total / weight : 1e6;
+  }
+
+  // Picks k distinct targets from pool, each draw weighted by Target Weight.
+  // Weight-0 PCs are only picked once no weighted PC is left.
+  function sampleWeightedTargets(pool, k, weights) {
+    const left = pool.slice();
+    const out = [];
+    while (out.length < k && left.length) {
+      let total = 0;
+      for (const j of left) total += weights[j];
+      let pick = -1;
+      if (total > 0) {
+        let r = Math.random() * total;
+        for (let i = 0; i < left.length; i += 1) {
+          if (weights[left[i]] <= 0) continue;
+          pick = i;
+          r -= weights[left[i]];
+          if (r < 0) break;
+        }
+      } else {
+        pick = randomInt(0, left.length - 1);
+      }
+      out.push(left[pick]);
+      left.splice(pick, 1);
+    }
+    return out;
+  }
+
   function attackUseCapacity(atk) {
     const encounterUses = Math.max(0, safeInt(atk && atk.uses_encounter, 0));
     return encounterUses > 0 ? encounterUses : Number.POSITIVE_INFINITY;
@@ -4030,7 +4139,7 @@
 
   function phaseMechanicsPerTargetDpr(pcRow, mode, mechanics, partySize, horizonRounds) {
     const rounds = Math.max(1, safeFloat(horizonRounds, 1));
-    const pSize = Math.max(1, safeInt(partySize, 1));
+    const pSize = Math.max(1, safeFloat(partySize, 1));
     let total = 0;
 
     for (const mech of mechanics || []) {
@@ -4239,7 +4348,7 @@
   }
 
   function legendaryActionsPerTargetDpr(pcRow, mode, actions, budget, partySize = 1) {
-    const pSize = Math.max(1, safeInt(partySize, 1));
+    const pSize = Math.max(1, safeFloat(partySize, 1));
     let total = 0;
     for (const action of selectedLegendaryActions(actions, budget)) {
       const targetChance = action.kind === "save"
@@ -4993,6 +5102,7 @@
     for (const key of SAVE_KEYS) {
       out[key] = safeInt(out[key], 0);
     }
+    out["Target Weight"] = pcTargetWeight(out);
     return out;
   }
 
