@@ -5,16 +5,20 @@
   const NOVA_METHODS = ["attack", "save_half", "auto_hit"];
   const STORAGE_KEY = "kelemvor_scales_web_state_v1";
   const IS_WORKER = typeof document === "undefined" && typeof self !== "undefined";
-  const MIN_TARGET_ROUNDS = 7;
-  const MAX_TARGET_ROUNDS = 10;
-  const BOSS_TUNE_MIN_ROUNDS = 7;
-  const BOSS_TUNE_MAX_ROUNDS = 10;
-  const BOSS_MINIMUM_SURVIVAL_ROUND = 7;
+  const MIN_TARGET_ROUNDS = 6;
+  const MAX_TARGET_ROUNDS = 9;
+  const BOSS_TUNE_MIN_ROUNDS = 6;
+  const BOSS_TUNE_MAX_ROUNDS = 9;
+  const BOSS_MINIMUM_SURVIVAL_ROUND = 6;
+  // Hard ceiling on fight length: the boss should be dead by the end of this round.
+  const FIGHT_MAX_ROUND = 11;
+  const FIGHT_OVERRUN_TOLERANCE = 0.10;
+  // Danger goal: by the end of round 6, a typical PC is down or "near down"
+  // (at or below this fraction of max HP) without healing.
   const FIRST_PC_DANGER_MIN_ROUND = 5;
   const FIRST_PC_DANGER_MAX_ROUND = 6;
-  const FIRST_PC_DANGER_TARGET_ROUND = 5.5;
-  const TPK_GRACE_MIN_ROUNDS = 2;
-  const TPK_GRACE_MAX_ROUNDS = 3;
+  const FIRST_PC_DANGER_TARGET_ROUND = 5.75;
+  const NEAR_DOWN_HP_FRACTION = 0.25;
   const MAX_TPK_WARNING_CAP = 0.25;
   const MINION_MIN_TUNED_HP = 20;
   const REPLENISHING_MINION_ABSORB_FRACTION = 0.65;
@@ -91,12 +95,12 @@
     dpr_cv: 0.6,
     initiative_mode: "random",
 
-    tune_target_median: 10.0,
+    tune_target_median: 8.0,
     tune_tpk_cap: 0.25,
     tune_kill_rate: 0.75,
     tune_band_max: 3.0,
 
-    pacing_rounds: 10,
+    pacing_rounds: 8,
     tight_pacing_enabled: true,
     tight_cap_pct: 0.25,
     tight_cap_resources: 4,
@@ -172,6 +176,7 @@
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
     { key: "Targets", label: "Save Targets", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Uses/round", label: "Uses/round", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 1)) },
+    { key: "Group", label: "Combo Group", type: "text", parser: (v) => String(v).trim() },
     { key: "Uses/encounter", label: "Uses/enc", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 0)) },
     { key: "Melee?", label: "Melee?", type: "checkbox", parser: (v) => Boolean(v) },
     { key: "Enabled?", label: "Enabled?", type: "checkbox", parser: (v) => Boolean(v) },
@@ -1169,7 +1174,7 @@
     els.lblTtkMedian.textContent = formatOutcomeMix("Boss Blitz", blitzSummary, state.enc_max_rounds);
     els.lblTtkP1090.textContent = formatOutcomeMix("Minion Clear", clearSummary, state.enc_max_rounds);
     els.lblTpk.textContent = formatTpkCapStatus(clearSummary, blitzSummary);
-    els.lblDowns.textContent = monteCarloRecommendation(clearSummary, blitzSummary, pacing.targetRounds);
+    els.lblDowns.textContent = monteCarloRecommendation(clearSummary, blitzSummary);
 
     const cumulativeRate = (rounds, total) => {
       const sorted = rounds.filter(Number.isFinite).sort((a, b) => a - b);
@@ -1238,9 +1243,11 @@
     const lateHorizon = targetPartyWipeMaxRound(targetRound);
     let ongoingAfterTarget = 0;
     let lateTpks = 0;
+    let overrun = 0;
     for (let index = 0; index < metrics.ttk.length; index += 1) {
       const victoryRound = metrics.ttk[index];
       const wipeRound = metrics.tpkRound && metrics.tpkRound[index];
+      if (!(victoryRound <= FIGHT_MAX_ROUND) && !(wipeRound <= FIGHT_MAX_ROUND)) overrun += 1;
       const victoryResolved = Number.isFinite(victoryRound) && victoryRound <= targetRound;
       const wipeResolved = Number.isFinite(wipeRound) && wipeRound <= targetRound;
       if (victoryResolved || wipeResolved) continue;
@@ -1262,6 +1269,7 @@
       tpkProb,
       unresolvedRate,
       ongoingAfterTargetRate: ongoingAfterTarget / total,
+      overrunRate: overrun / total,
       ongoingAfterTargetCount: ongoingAfterTarget,
       totalTrials: total,
       lateTpkConditional: ongoingAfterTarget > 0 ? lateTpks / ongoingAfterTarget : null,
@@ -1306,7 +1314,7 @@
     applyMetricClass(els.mcWinByTarget, blitzSummary.killByTarget + 0.02 >= winGoal ? "success" : "warning");
 
     setText(els.mcFirstDownByR6, formatPercent(blitzSummary.firstDownByDangerRound));
-    setText(els.mcFirstDownByR6Sub, `goal at least ${formatPercent(BLITZ_DANGER_PROBABILITY)} · refreshing THP · no healing`);
+    setText(els.mcFirstDownByR6Sub, `any PC at 0 HP or ≤${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP · goal at least ${formatPercent(BLITZ_DANGER_PROBABILITY)} · no healing`);
     applyMetricClass(els.mcFirstDownByR6, blitzSummary.firstDownByDangerRound + 0.02 >= BLITZ_DANGER_PROBABILITY ? "success" : "warning");
 
     setText(els.mcBossBlitzTpk, formatPercent(blitzSummary.tpkProb));
@@ -1323,9 +1331,8 @@
     applyMetricClass(els.mcLateTpk, null);
   }
 
-  function monteCarloRecommendation(clearSummary, blitzSummary, targetRound) {
+  function monteCarloRecommendation(clearSummary, blitzSummary) {
     const cap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
-    const requestedWinRate = clamp(safeFloat(state.tune_kill_rate, 0.75), 0, 1);
     const worstTpk = Math.max(clearSummary.tpkProb, blitzSummary.tpkProb);
     if (worstTpk > cap + 1e-9) {
       const strategy = blitzSummary.tpkProb > clearSummary.tpkProb ? "Boss Blitz" : "Minion Clear";
@@ -1334,16 +1341,16 @@
     if (blitzSummary.victoryRate < 0.10) {
       return `Action: Boss Blitz rarely resolves by R${state.enc_max_rounds}; inspect casualty-driven DPR loss and the boss-only HP budget. Minion Clear should not be used to lower boss HP.`;
     }
-    if (blitzSummary.killByTarget + 0.02 < requestedWinRate) {
-      return `Action: improve boss-only kill pace; only ${formatPercent(blitzSummary.killByTarget)} of Boss-Blitz trials win by target round ${targetRound}.`;
+    if (blitzSummary.overrunRate > FIGHT_OVERRUN_TOLERANCE) {
+      return `Action: the fight runs past R${FIGHT_MAX_ROUND} in ${formatPercent(blitzSummary.overrunRate)} of Boss-Blitz trials; lower boss HP or the target encounter rounds.`;
     }
     if (blitzSummary.firstDownByDangerRound < BLITZ_DANGER_PROBABILITY) {
-      return `Action: increase encounter pressure; Boss Blitz has only ${formatPercent(blitzSummary.firstDownByDangerRound)} unassisted first-down risk by R${BLITZ_DANGER_ROUND}.`;
+      return `Action: increase encounter pressure; only ${formatPercent(blitzSummary.firstDownByDangerRound)} of Boss-Blitz trials have a PC down or near down by R${BLITZ_DANGER_ROUND} without healing.`;
     }
     if (clearSummary.unresolvedRate > 0.25) {
       return `DM note: ease minion absorption/cadence or extend Max Rounds if Minion Clear should resolve sooner; ${formatPercent(clearSummary.unresolvedRate)} remain unresolved.`;
     }
-    return `Result: the Boss-Blitz baseline carries ${formatPercent(blitzSummary.firstDownByDangerRound)} unassisted first-casualty risk by round ${BLITZ_DANGER_ROUND}; Minion Clear remains the secondary DM comparison.`;
+    return `Result: ${formatPercent(blitzSummary.firstDownByDangerRound)} of Boss-Blitz trials have a PC down or near down by R${BLITZ_DANGER_ROUND} without healing; ${formatPercent(blitzSummary.overrunRate)} run past R${FIGHT_MAX_ROUND}.`;
   }
 
   function renderStrategyComparison(clearSummary, blitzSummary, targetRound) {
@@ -1364,7 +1371,8 @@
       "Victory window (wins)": summary.hasVictories ? `${formatRoundMetric(summary.p10)}-${formatRoundMetric(summary.p90)}` : "No victories",
       [`Win by R${targetRound}`]: formatPercent(summary.killByTarget),
       "Boss HP in non-wins": summary.hasFailures ? formatPercent(summary.medianBossHpOnFailure) : "—",
-      [`Unassisted down by R${BLITZ_DANGER_ROUND}`]: formatPercent(summary.firstDownByDangerRound),
+      [`Down/≤${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP by R${BLITZ_DANGER_ROUND}`]: formatPercent(summary.firstDownByDangerRound),
+      [`Past R${FIGHT_MAX_ROUND}`]: formatPercent(summary.overrunRate),
       "PCs down on wins": summary.hasVictories ? summary.meanDowns.toFixed(2) : "—",
     };
   }
@@ -1398,11 +1406,16 @@
     if (blitzSummary.killBeforeMinimum > 0.001) {
       issues.push({ hard: true, text: `${formatPercent(blitzSummary.killBeforeMinimum)} of Boss-Blitz trials defeat the boss before round ${BOSS_MINIMUM_SURVIVAL_ROUND}; Boss HP Pacing is not protecting the configured floor.` });
     }
+    // The hard length goal is the R11 overrun check below; winning by the HP
+    // budget's target round is informational only.
     if (blitzSummary.killByTarget + 0.02 < winByTargetGoal) {
-      issues.push({ hard: false, text: `Only ${formatPercent(blitzSummary.killByTarget)} of Boss-Blitz trials win by R${pacing.targetRounds}, below the ${formatPercent(winByTargetGoal)} goal. The boss-only HP budget is running long after casualties and lost actions.` });
+      notes.push(`Only ${formatPercent(blitzSummary.killByTarget)} of Boss-Blitz trials win by R${pacing.targetRounds} (goal ${formatPercent(winByTargetGoal)}); casualties and lost actions stretch the HP budget, but ${formatPercent(1 - blitzSummary.overrunRate)} still resolve by R${FIGHT_MAX_ROUND}.`);
     }
     if (blitzSummary.firstDownByDangerRound + 0.02 < BLITZ_DANGER_PROBABILITY) {
-      issues.push({ hard: false, text: `Boss Blitz has ${formatPercent(blitzSummary.firstDownByDangerRound)} unassisted first-down risk by R${BLITZ_DANGER_ROUND}, below the ${formatPercent(BLITZ_DANGER_PROBABILITY)} pressure target.` });
+      issues.push({ hard: false, text: `Only ${formatPercent(blitzSummary.firstDownByDangerRound)} of Boss-Blitz trials have a PC down or near down by R${BLITZ_DANGER_ROUND} without healing, below the ${formatPercent(BLITZ_DANGER_PROBABILITY)} pressure target.` });
+    }
+    if (blitzSummary.overrunRate > FIGHT_OVERRUN_TOLERANCE) {
+      issues.push({ hard: true, text: `${formatPercent(blitzSummary.overrunRate)} of Boss-Blitz trials are still fighting after R${FIGHT_MAX_ROUND} (limit ${formatPercent(FIGHT_OVERRUN_TOLERANCE)}). Lower boss HP or the target encounter rounds.` });
     }
     if (hasMinions && clearSummary.unresolvedRate > 0.25) {
       notes.push(`Optional Minion Clear remains unresolved at R${state.enc_max_rounds} in ${formatPercent(clearSummary.unresolvedRate)} of trials; the DM can reduce minion absorption, count, or wave cadence without changing boss HP.`);
@@ -1417,7 +1430,8 @@
         : '<span class="pacing-badge badge-ok">Targets Met</span>';
     const durability = `Boss Blitz: ${formatPercent(blitzSummary.killByTarget)} win by R${pacing.targetRounds}` +
       (blitzSummary.hasVictories ? `; median victory ${formatRoundMetric(blitzSummary.medianTtk)}` : "; no victories") +
-      `. Unassisted first-down by R${BLITZ_DANGER_ROUND}: ${formatPercent(blitzSummary.firstDownByDangerRound)}. ` +
+      `. PC down/near down by R${BLITZ_DANGER_ROUND} (no healing): ${formatPercent(blitzSummary.firstDownByDangerRound)}. ` +
+      `Past R${FIGHT_MAX_ROUND}: ${formatPercent(blitzSummary.overrunRate)}. ` +
       `TPK: Boss Blitz ${formatPercent(blitzSummary.tpkProb)}, Minion Clear ${formatPercent(clearSummary.tpkProb)}.`;
     const findingItems = [
       ...issues.map((issue) => issue.text),
@@ -1780,7 +1794,6 @@
     const originalMult = bossDprMultiplier(state);
     const originalTrials = Math.max(1000, safeInt(state.enc_trials, 10000));
     const targetRound = bossTuneTargetRounds();
-    const collapseTarget = targetPartyWipeRound(targetRound);
     const tpkCap = clamp(safeFloat(state.tune_tpk_cap, 0.25), 0, MAX_TPK_WARNING_CAP);
     const killRateTarget = clamp(safeFloat(state.tune_kill_rate, 0.75), 0.50, 0.95);
     const bandTarget = Math.max(0.5, safeFloat(state.tune_band_max, 3.0));
@@ -1816,12 +1829,12 @@
     const pacingMult = round2(clamp(safeFloat(pacingResult.targetBossDprMult, 0), 0, 20));
     state.boss_hp = tunedHp;
     state.boss_dpr_mult = pacingMult;
-    state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 13), Math.ceil(collapseTarget));
+    state.enc_max_rounds = Math.max(safeInt(state.enc_max_rounds, 13), targetPartyWipeMaxRound());
     state.enc_trials = originalTrials;
 
     // Base HP carries the full target-round party-DPR budget. Four Legendary
     // Resistances smooth exceptional burst, and HP pacing prevents a tuned boss
-    // from being removed before round 7 even under a high-roll blitz.
+    // from being removed before round 6 even under a high-roll blitz.
     state.tight_pacing_enabled = true;
     state.tight_cap_pct = 0.25;
     state.tight_cap_resources = 4;
@@ -1831,7 +1844,7 @@
       changes.push(`Boss HP: ${originalHp} -> ${tunedHp} (${targetRound}-round party-DPR budget)`);
     }
     if (Math.abs(pacingMult - originalMult) > 0.01) {
-      changes.push(`Boss pressure scale: ${originalMult.toFixed(2)}x -> ${pacingMult.toFixed(2)}x (${collapseTarget.toFixed(1)}-round collapse target)`);
+      changes.push(`Boss pressure scale: ${originalMult.toFixed(2)}x -> ${pacingMult.toFixed(2)}x (typical PC at ${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP by R${FIRST_PC_DANGER_MAX_ROUND})`);
     }
 
     // Bake the pressure target into the actual stat block. A correction pass
@@ -1886,8 +1899,9 @@
     const finalBand = Number.isFinite(finalP10) && Number.isFinite(finalP90) ? finalP90 - finalP10 : Infinity;
     const finalTpk = Math.max(finalClearMetrics.tpkProb, finalBlitzMetrics.tpkProb);
     const finalKillByTarget = finalMetrics.ttk.filter((v) => Number.isFinite(v) && v <= targetRound).length / Math.max(1, finalMetrics.ttk.length);
-    const finalProjectedWipe = projectedPartyWipeRound(1, targetPartyWipeMaxRound(targetRound));
+    const finalProjectedWipe = projectedPartyWipeRound(1, targetPartyWipeMaxRound());
     const finalBlitzDanger = safeFloat(finalBlitzMetrics.firstDownByDangerRound, 0);
+    const finalBlitzOverrun = summarizeEncounterStrategy(finalBlitzMetrics, targetRound).overrunRate;
     const lines = changes.length ? changes.map((c) => `  - ${c}`).join("\n") : "  - Already at pacing targets";
     const tpkLine = `TPK: Boss Blitz ${(100 * finalBlitzMetrics.tpkProb).toFixed(1)}% | ` +
       `Minion Clear ${(100 * finalClearMetrics.tpkProb).toFixed(1)}% | cap ${(100 * tpkCap).toFixed(1)}%`;
@@ -1910,7 +1924,7 @@
     const minionWarnings = allMinionWarnings.length
       ? `\n${allMinionWarnings.map((warning) => `Warning: ${warning}`).join("\n")}`
       : "";
-    const blitzLine = `\nBoss Blitz unassisted first PC down by round ${BLITZ_DANGER_ROUND}: ${formatPercent(finalBlitzDanger)}`;
+    const blitzLine = `\nBoss Blitz: a PC down or at ${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP by R${BLITZ_DANGER_ROUND} without healing: ${formatPercent(finalBlitzDanger)}`;
     const victoryTiming = Number.isFinite(finalMed)
       ? `Median victory: ${finalMed.toFixed(1)}R | p10-p90: ${finalP10.toFixed(1)}-${finalP90.toFixed(1)}R`
       : `No Boss-Blitz victories by R${state.enc_max_rounds}`;
@@ -1918,8 +1932,8 @@
     alert(
       `Auto-tune complete:\n${lines}\n\n` +
       `Boss-Blitz target: ${targetRound}R | ${victoryTiming}\n` +
-      `Party collapse target: ${formatRoundWindow(targetPartyWipeMinRound(targetRound), targetPartyWipeMaxRound(targetRound))} | ` +
-      `Projected: ${formatProjectedRound(finalProjectedWipe, targetPartyWipeMaxRound(targetRound))} | ${tpkLine}` +
+      `Boss-Blitz still fighting after R${FIGHT_MAX_ROUND}: ${formatPercent(finalBlitzOverrun)} (limit ${formatPercent(FIGHT_OVERRUN_TOLERANCE)})\n` +
+      `Last PC at 0 HP (avg damage, with healing): ${formatProjectedRound(finalProjectedWipe, targetPartyWipeMaxRound())} | ${tpkLine}` +
       killRateLine +
       blitzLine +
       bandLine +
@@ -1927,7 +1941,7 @@
       minionWarnings +
       tightPacingAdviceText()
     );
-    setStatus(`Auto-tune complete. HP=${state.boss_hp}; projected collapse=${formatProjectedRound(finalProjectedWipe, targetPartyWipeMaxRound(targetRound))}.`, 5000);
+    setStatus(`Auto-tune complete. HP=${state.boss_hp}; last PC down=${formatProjectedRound(finalProjectedWipe, targetPartyWipeMaxRound())}.`, 5000);
   }
 
   function runMcSim(pcRow, attacks, opts) {
@@ -1951,6 +1965,12 @@
     const totalDamage = new Array(trials).fill(0);
     const riderRemaining = new Array(trials).fill(0);
     const attackUsesRemaining = Array.from({ length: trials }, () => attacks.map((atk) => attackUseCapacity(atk)));
+    const attackSlots = buildAttackSlots(attacks);
+    const partyRows = activePartyRows(opts);
+    const allPcs = partyRows.map((_, j) => j);
+    const attackValues = attacks.map((atk) =>
+      attackUseValue(atk, partyRows.map((pc) => expectedAttackVsPc(atk, pc, String(opts.mode_select || "normal"))), allPcs));
+    const usedThisRound = new Array(attacks.length).fill(0);
 
     for (let rnd = 1; rnd <= rounds; rnd += 1) {
       for (let i = 0; i < trials; i += 1) {
@@ -1967,12 +1987,13 @@
           currentMode = "adv";
         }
 
-        for (let a = 0; a < attacks.length; a += 1) {
-          const atk = attacks[a];
-          if (atk.uses_per_round <= 0) continue;
-
-          const availableUses = Math.min(atk.uses_per_round, attackUsesRemaining[i][a]);
-          for (let use = 0; use < availableUses; use += 1) {
+        usedThisRound.fill(0);
+        for (const slot of attackSlots) {
+          for (let use = 0; use < slot.budget; use += 1) {
+            const a = pickSlotAttack(slot, attacks, usedThisRound, attackUsesRemaining[i], (idx) => attackValues[idx]);
+            if (a < 0) break;
+            const atk = attacks[a];
+            usedThisRound[a] += 1;
             attackUsesRemaining[i][a] -= 1;
             const targetChance = atk.kind === "save"
               ? Math.min(1, Math.max(1, safeInt(atk.targets, 1)) / partySize)
@@ -2133,10 +2154,15 @@
 
     const riderRem = Array.from({ length: trials }, () => new Array(P).fill(0));
     const attackUsesRemaining = Array.from({ length: trials }, () => attacks.map((atk) => attackUseCapacity(atk)));
+    const attackSlots = buildAttackSlots(attacks);
+    const attackValueVsPc = attacks.map((atk) => party.map((pc) => expectedAttackVsPc(atk, pc, String(opts.mode_select || "normal"))));
+    const usedThisRound = new Array(attacks.length).fill(0);
 
     const ttk = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const firstDownRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const firstDownRoundUnassisted = new Array(trials).fill(Number.POSITIVE_INFINITY);
+    const firstNearDownRoundUnassisted = new Array(trials).fill(Number.POSITIVE_INFINITY);
+    const pcNearDownHp = party.map((pc) => Math.max(1, safeFloat(pc.HP, 1)) * NEAR_DOWN_HP_FRACTION);
     const tpkRound = new Array(trials).fill(Number.POSITIVE_INFINITY);
     const tpkFlags = new Array(trials).fill(false);
     const pcsDownAtVictory = new Array(trials).fill(0);
@@ -2288,6 +2314,9 @@
             if (pcsHpUnassisted[t][target] <= 0 && !Number.isFinite(firstDownRoundUnassisted[t])) {
               firstDownRoundUnassisted[t] = rnd;
             }
+            if (pcsHpUnassisted[t][target] <= pcNearDownHp[target] && !Number.isFinite(firstNearDownRoundUnassisted[t])) {
+              firstNearDownRoundUnassisted[t] = rnd;
+            }
           }
           const healed = Math.min(afterThp, healingPool[target]);
           healingPool[target] -= healed;
@@ -2308,15 +2337,17 @@
           continue;
         }
 
-        for (let a = 0; a < attacks.length; a += 1) {
-          const atk = attacks[a];
-          if (atk.uses_per_round <= 0) continue;
-
-          const availableUses = Math.min(atk.uses_per_round, attackUsesRemaining[t][a]);
-          for (let use = 0; use < availableUses; use += 1) {
-            attackUsesRemaining[t][a] -= 1;
+        usedThisRound.fill(0);
+        for (const slot of attackSlots) {
+          for (let use = 0; use < slot.budget; use += 1) {
             const alivePool = aliveIndicesForTrial(pcsAlive[t]);
             if (!alivePool.length) break;
+            const a = pickSlotAttack(slot, attacks, usedThisRound, attackUsesRemaining[t],
+              (idx) => attackUseValue(attacks[idx], attackValueVsPc[idx], alivePool));
+            if (a < 0) break;
+            const atk = attacks[a];
+            usedThisRound[a] += 1;
+            attackUsesRemaining[t][a] -= 1;
             const targets = atk.kind === "save"
               ? sampleWithoutReplacement(alivePool, Math.min(Math.max(1, safeInt(atk.targets, 1)), alivePool.length))
               : [alivePool[randomInt(0, alivePool.length - 1)]];
@@ -2467,7 +2498,8 @@
       finiteTtk,
       firstDownRound,
       firstDownRoundUnassisted,
-      firstDownByDangerRound: meanOf(firstDownRoundUnassisted.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
+      // "Down or near down" by the danger round, no healing (refreshing THP still applies).
+      firstDownByDangerRound: meanOf(firstNearDownRoundUnassisted.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
       firstDownByDangerRoundAssisted: meanOf(firstDownRound.map((round) => (round <= BLITZ_DANGER_ROUND ? 1 : 0))),
       tpkFlags,
       tpkRound,
@@ -2535,37 +2567,37 @@
     const dprMult = bossDprMultiplier(state);
 
     let firstDownRound = Infinity;
+    let softestPcName = null;
     let lastDownRound = 0;
     let unassistedLastDownRound = 0;
-    let targetAttackDpr = 0;
-    let targetBossDprMult = null;
-    let tpkPressureMult = null;
-    let firstDownPressureMult = null;
     let pressureImpossible = false;
-    let toughestPcName = null;
-    const firstDangerRound = FIRST_PC_DANGER_TARGET_ROUND;
-    const wipeBudgetRound = targetPartyWipeRound(targetRounds);
+    const dangerRound = FIRST_PC_DANGER_TARGET_ROUND;
+    const wipeHorizon = targetPartyWipeMaxRound();
+    const dangerMults = [];
+    const nearDownRounds = [];
     const pcRows = [];
 
     for (const pc of party) {
       const pcHp = Math.max(1, safeInt(pc.HP, 1));
 
-      const firstRecurring = recurringBossDprPerPc(pc, attacks, legendary, firstDangerRound, partySize, state);
-      const firstPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, firstDangerRound);
-      const firstMinionDpr = minionDprVsPc(pc, firstDangerRound, useNova, strategy);
+      const firstRecurring = recurringBossDprPerPc(pc, attacks, legendary, dangerRound, partySize, state);
+      const firstPhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, dangerRound);
+      const firstMinionDpr = minionDprVsPc(pc, dangerRound, useNova, strategy);
       const firstRawBossDpr = firstRecurring.attackDpr + firstRecurring.legendaryDpr + lairRechDpr + firstPhaseDpr;
       const unassistedNetDprPerPc = Math.max(0, firstRawBossDpr * dprMult + firstMinionDpr - thpAvg);
       const unassistedPcTtd = unassistedNetDprPerPc > 0 ? pcHp / unassistedNetDprPerPc : Infinity;
+      const nearDownRound = unassistedNetDprPerPc > 0 ? pcHp * (1 - NEAR_DOWN_HP_FRACTION) / unassistedNetDprPerPc : Infinity;
 
-      const wipeRecurring = recurringBossDprPerPc(pc, attacks, legendary, wipeBudgetRound, partySize, state);
-      const wipePhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, wipeBudgetRound);
-      const wipeMinionDpr = minionDprVsPc(pc, wipeBudgetRound, useNova, strategy);
+      const wipeRecurring = recurringBossDprPerPc(pc, attacks, legendary, wipeHorizon, partySize, state);
+      const wipePhaseDpr = phaseMechanicsPerTargetDpr(pc, state.mode_select || "normal", mechanics, party.length, wipeHorizon);
+      const wipeMinionDpr = minionDprVsPc(pc, wipeHorizon, useNova, strategy);
       const wipeRawBossDpr = wipeRecurring.attackDpr + wipeRecurring.legendaryDpr + lairRechDpr + wipePhaseDpr;
       const wipeNetDprPerPc = Math.max(0, wipeRawBossDpr * dprMult + wipeMinionDpr - thpAvg - healingPerPc);
       const pcTtd = wipeNetDprPerPc > 0 ? pcHp / wipeNetDprPerPc : Infinity;
 
-      if (Number.isFinite(unassistedPcTtd)) {
-        firstDownRound = Math.min(firstDownRound, unassistedPcTtd);
+      if (unassistedPcTtd < firstDownRound) {
+        firstDownRound = unassistedPcTtd;
+        softestPcName = pc.Name || "?";
       }
       if (Number.isFinite(pcTtd)) {
         lastDownRound = Math.max(lastDownRound, pcTtd);
@@ -2573,45 +2605,35 @@
       if (Number.isFinite(unassistedPcTtd)) {
         unassistedLastDownRound = Math.max(unassistedLastDownRound, unassistedPcTtd);
       }
+      nearDownRounds.push(nearDownRound);
 
-      const wipeRequiredBossDpr = pcHp / wipeBudgetRound + thpAvg + healingPerPc - wipeMinionDpr;
-      const firstRequiredBossDpr = pcHp / firstDangerRound + thpAvg - firstMinionDpr;
-      const targetMultForWipe = wipeRawBossDpr > 0
-        ? Math.max(0, wipeRequiredBossDpr / wipeRawBossDpr)
-        : wipeRequiredBossDpr <= 0 ? 0 : Infinity;
-      const targetMultForFirstDanger = firstRawBossDpr > 0
-        ? Math.max(0, firstRequiredBossDpr / firstRawBossDpr)
-        : firstRequiredBossDpr <= 0 ? 0 : Infinity;
-      if (!Number.isFinite(targetMultForWipe) || !Number.isFinite(targetMultForFirstDanger)) {
+      // Multiplier that puts this PC at the near-down threshold by the danger round.
+      const dangerRequiredBossDpr = pcHp * (1 - NEAR_DOWN_HP_FRACTION) / dangerRound + thpAvg - firstMinionDpr;
+      const dangerMult = firstRawBossDpr > 0
+        ? Math.max(0, dangerRequiredBossDpr / firstRawBossDpr)
+        : dangerRequiredBossDpr <= 0 ? 0 : Infinity;
+      if (!Number.isFinite(dangerMult)) {
         pressureImpossible = true;
-      }
-
-      if (Number.isFinite(targetMultForWipe) && (tpkPressureMult == null || targetMultForWipe > tpkPressureMult)) {
-        tpkPressureMult = targetMultForWipe;
-        toughestPcName = pc.Name || "?";
-      }
-      if (Number.isFinite(targetMultForFirstDanger)
-          && (firstDownPressureMult == null || targetMultForFirstDanger < firstDownPressureMult)) {
-        firstDownPressureMult = targetMultForFirstDanger;
+      } else {
+        dangerMults.push(dangerMult);
       }
 
       pcRows.push({
         PC: pc.Name || "?",
         "HP / AC": `${pcHp} / ${safeInt(pc.AC, 10)}`,
         "HP loss/R, no healing": round2(unassistedNetDprPerPc),
-        "At 0 HP, no healing": formatProjectedRound(unassistedPcTtd, FIRST_PC_DANGER_MAX_ROUND),
-        "HP loss/R, with healing": round2(wipeNetDprPerPc),
+        [`≤${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP, no healing`]: formatProjectedRound(nearDownRound, FIGHT_MAX_ROUND),
+        "At 0 HP, no healing": formatProjectedRound(unassistedPcTtd, FIGHT_MAX_ROUND),
         "At 0 HP, with healing": formatProjectedRound(pcTtd, targetPartyWipeMaxRound()),
       });
     }
 
-    // Satisfy both independent damage budgets: one PC at 0 HP without healing
-    // around R5-6, and every PC at 0 HP with healing around R12-13.
-    const firstPressure = Number.isFinite(firstDownPressureMult) ? firstDownPressureMult : 0;
-    const wipePressure = Number.isFinite(tpkPressureMult) ? tpkPressureMult : 0;
-    targetBossDprMult = Math.max(firstPressure, wipePressure);
-    if (targetBossDprMult <= 0) targetBossDprMult = null;
-    targetAttackDpr = targetBossDprMult == null ? 0 : round2(targetBossDprMult);
+    // Aim the round-6 danger goal at the typical (median) PC rather than the
+    // softest one, so a single low-AC outlier does not cap boss pressure for
+    // the whole party. Squishier PCs are expected to drop earlier.
+    let targetBossDprMult = dangerMults.length ? medianOf(dangerMults) : null;
+    if (targetBossDprMult != null && targetBossDprMult <= 0) targetBossDprMult = null;
+    const typicalNearDownRound = nearDownRounds.length ? medianOf(nearDownRounds) : Infinity;
 
     return {
       targetRounds,
@@ -2619,15 +2641,14 @@
       minionPhaseInfo,
       effectivePartyDprOnBoss,
       firstDownRound: Number.isFinite(firstDownRound) ? firstDownRound : null,
+      softestPcName,
+      typicalNearDownRound: Number.isFinite(typicalNearDownRound) ? typicalNearDownRound : null,
       lastDownRound: lastDownRound > 0 ? lastDownRound : null,
       unassistedLastDownRound: unassistedLastDownRound > 0 ? unassistedLastDownRound : null,
-      targetAttackDpr: round2(targetAttackDpr),
+      targetAttackDpr: targetBossDprMult == null ? 0 : round2(targetBossDprMult),
       targetBossDprMult: targetBossDprMult == null ? null : round2(targetBossDprMult),
-      firstDownPressureMult: firstDownPressureMult == null ? null : round2(firstDownPressureMult),
-      wipePressureMult: tpkPressureMult == null ? null : round2(tpkPressureMult),
       pressureImpossible,
       bossDprMult: dprMult,
-      toughestPcName,
       currentBossHp: safeFloat(state.boss_hp, 200),
       pcRows,
       lairRechDpr,
@@ -2947,9 +2968,8 @@
       changes.push(...bakeTunedDamageIntoStatBlock());
 
       const pacing = computePacingResult();
-      if (pacing.firstDownRound == null || pacing.firstDownRound > FIRST_PC_DANGER_MAX_ROUND
-          || pacing.lastDownRound == null || pacing.lastDownRound > targetPartyWipeMaxRound()) {
-        warnings.push("The 25% TPK ceiling conflicts with at least one damage-timing target; the cap was prioritized without reducing boss HP.");
+      if (pacing.typicalNearDownRound == null || pacing.typicalNearDownRound > FIRST_PC_DANGER_MAX_ROUND) {
+        warnings.push(`The TPK ceiling conflicts with the round-${FIRST_PC_DANGER_MAX_ROUND} danger target; the cap was prioritized without reducing boss HP.`);
       }
     } finally {
       runner.close();
@@ -3311,49 +3331,45 @@
       ? `boss-only R${r.targetRounds} target: ${r.recommendedBossHp}`
       : "boss-only target unavailable");
 
-    if (r.firstDownRound != null) {
-      setText(els.pacingFirstDown, formatProjectedRound(r.firstDownRound, FIRST_PC_DANGER_MAX_ROUND));
+    const nearDown = r.typicalNearDownRound;
+    if (nearDown != null) {
+      setText(els.pacingFirstDown, formatProjectedRound(nearDown, FIGHT_MAX_ROUND));
       applyMetricClass(
         els.pacingFirstDown,
-        r.firstDownRound < FIRST_PC_DANGER_MIN_ROUND ? "danger" : r.firstDownRound > FIRST_PC_DANGER_MAX_ROUND ? "warning" : "success"
+        nearDown < FIRST_PC_DANGER_MIN_ROUND ? "danger" : nearDown > FIRST_PC_DANGER_MAX_ROUND ? "warning" : "success"
       );
     } else {
       setText(els.pacingFirstDown, "∞");
       applyMetricClass(els.pacingFirstDown, "warning");
     }
+    const softestNote = r.firstDownRound != null
+      ? ` · softest (${r.softestPcName}) at 0 HP ${formatProjectedRound(r.firstDownRound, FIGHT_MAX_ROUND)}`
+      : "";
     setText(
       els.pacingFirstDownSub,
-      `${projectionDetail(r.firstDownRound, FIRST_PC_DANGER_MAX_ROUND)} · target R${FIRST_PC_DANGER_MIN_ROUND}–${FIRST_PC_DANGER_MAX_ROUND} · no healing`
+      `typical PC ≤${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP · target by R${FIRST_PC_DANGER_MAX_ROUND} · no healing${softestNote}`
     );
 
     if (r.lastDownRound != null) {
-      setText(els.pacingPartyWipe, formatProjectedRound(r.lastDownRound, targetPartyWipeMaxRound(r.targetRounds)));
-      applyMetricClass(els.pacingPartyWipe, r.lastDownRound < targetPartyWipeMinRound(r.targetRounds) ? "danger" : r.lastDownRound > targetPartyWipeMaxRound(r.targetRounds) ? "warning" : "success");
+      setText(els.pacingPartyWipe, formatProjectedRound(r.lastDownRound, targetPartyWipeMaxRound()));
+      applyMetricClass(els.pacingPartyWipe, r.lastDownRound < r.targetRounds ? "danger" : r.lastDownRound < FIGHT_MAX_ROUND ? "warning" : "success");
     } else {
       setText(els.pacingPartyWipe, "∞");
-      applyMetricClass(els.pacingPartyWipe, "warning");
+      applyMetricClass(els.pacingPartyWipe, "success");
     }
     if (els.pacingPartyWipeSub) {
       const totalHealing = Math.max(0, safeFloat(state.party_healing_per_round, 0));
-      const unassisted = r.unassistedLastDownRound;
       setText(
         els.pacingPartyWipeSub,
-        `${projectionDetail(r.lastDownRound, targetPartyWipeMaxRound(r.targetRounds))} · target R${targetPartyWipeMinRound(r.targetRounds)}–${targetPartyWipeMaxRound(r.targetRounds)}` +
-          (totalHealing > 0 ? " · healing included" : " · no healing supplied") +
-          (totalHealing > 0 && unassisted != null && unassisted <= targetPartyWipeMaxRound(r.targetRounds)
-            ? ` · no-heal ${formatProjectedRound(unassisted, targetPartyWipeMaxRound(r.targetRounds))}`
-            : "")
+        `should outlast the R${FIGHT_MAX_ROUND} fight cap` +
+          (totalHealing > 0 ? " · healing included" : " · no healing supplied")
       );
     }
 
     const bossDprMult = Number.isFinite(r.bossDprMult) ? r.bossDprMult : 1;
     setText(els.pacingTargetDpr, `${bossDprMult.toFixed(2)}x`);
-    const targetMultNote = Number.isFinite(r.targetBossDprMult) ? `needed for timing: ${r.targetBossDprMult.toFixed(2)}x` : "timing target unavailable";
-    const budgetParts = [];
-    if (Number.isFinite(r.firstDownPressureMult)) budgetParts.push(`first-down ${r.firstDownPressureMult.toFixed(2)}x`);
-    if (Number.isFinite(r.wipePressureMult)) budgetParts.push(`wipe ${r.wipePressureMult.toFixed(2)}x`);
-    const dprHint = budgetParts.length ? `${targetMultNote} · ${budgetParts.join(" · ")}` : targetMultNote;
-    setText(els.pacingTargetDprSub, dprHint);
+    const targetMultNote = Number.isFinite(r.targetBossDprMult) ? `needed for R${FIRST_PC_DANGER_MAX_ROUND} danger: ${r.targetBossDprMult.toFixed(2)}x` : "timing target unavailable";
+    setText(els.pacingTargetDprSub, targetMultNote);
 
     // Balance analysis
     renderPacingBalance(r);
@@ -3364,9 +3380,9 @@
       const healingText = `${round2(r.healingPerPc)} expected healing per PC each round`;
       els.pacingTableSummary.textContent =
         `Straight-line Boss-Blitz estimates. “No healing” still includes ${thpText}. ` +
-        `“With healing” also includes ${healingText}. The goals are: one PC at 0 HP around R5–6, ` +
-        `and the last PC at 0 HP around R${targetPartyWipeMinRound(r.targetRounds)}–${targetPartyWipeMaxRound(r.targetRounds)}. ` +
-        `Run Full Analysis for actual probabilities and targeting variance.`;
+        `“With healing” also includes ${healingText}. The goals are: the typical (median) PC at or below ` +
+        `${Math.round(NEAR_DOWN_HP_FRACTION * 100)}% HP by R${FIRST_PC_DANGER_MAX_ROUND} without healing (squishier PCs drop sooner), ` +
+        `and the boss dead by R${FIGHT_MAX_ROUND}. Run Full Analysis for actual probabilities and targeting variance.`;
     }
     renderResultTable(els.pacingTable, r.pcRows);
   }
@@ -3378,9 +3394,8 @@
     const bossHp = r.currentBossHp;
     const recHp = r.recommendedBossHp;
     const partyWipe = r.lastDownRound;
-    const minWipe = targetPartyWipeMinRound(N);
-    const maxWipe = targetPartyWipeMaxRound(N);
-    const wipeWindow = formatRoundWindow(minWipe, maxWipe);
+    const nearDown = r.typicalNearDownRound;
+    const nearPct = `${Math.round(NEAR_DOWN_HP_FRACTION * 100)}%`;
 
     let cls = "bal-ok";
     let badge = "";
@@ -3391,41 +3406,29 @@
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Cannot Kill Boss</span>`;
       analysis = "Party effective DPR on the boss is zero — check resistance factor, regen, and party DPR settings.";
-    } else if (r.firstDownRound != null && r.firstDownRound < FIRST_PC_DANGER_MIN_ROUND) {
-      cls = "bal-hard";
-      badge = `<span class="pacing-badge badge-hard">Early Casualty</span>`;
-      analysis = `Without healing, the first PC depletes at round ${fmt1(r.firstDownRound)}, before the round ${FIRST_PC_DANGER_MIN_ROUND}-${FIRST_PC_DANGER_MAX_ROUND} target. ` +
-        `The party's HP/defense spread may make the first-drop and full-collapse constraints conflict.`;
-    } else if (r.firstDownRound == null || r.firstDownRound > FIRST_PC_DANGER_MAX_ROUND) {
-      cls = "bal-warn";
-      badge = `<span class="pacing-badge badge-warn">Low Early Pressure</span>`;
-      analysis = `Without healing, no PC is projected to fall by round ${FIRST_PC_DANGER_MAX_ROUND}. ` +
-        `Increase boss pressure toward ${fmtMult(r.targetBossDprMult)}.`;
     } else if (partyWipe != null && partyWipe < N) {
       cls = "bal-hard";
       badge = `<span class="pacing-badge badge-hard">Very Hard</span>`;
-      analysis = `Party wipes at round ${fmt1(partyWipe)} — well before the target ${N} rounds. ` +
+      analysis = `Party wipes at round ${fmt1(partyWipe)} — before the boss's R${N} HP budget runs out. ` +
         `Reduce boss DPR toward ${fmtMult(r.targetBossDprMult)} or raise party sustain.`;
-    } else if (partyWipe != null && partyWipe < minWipe) {
+    } else if (nearDown != null && nearDown < FIRST_PC_DANGER_MIN_ROUND) {
       cls = "bal-warn";
       badge = `<span class="pacing-badge badge-warn">Hard</span>`;
-      analysis = `Party wipes at round ${fmt1(partyWipe)} — too soon after the boss death target. ` +
-        `Use boss DPR multiplier ${fmtMult(r.targetBossDprMult)} so full-party collapse lands by ${wipeWindow}.`;
-    } else if (partyWipe == null || !Number.isFinite(partyWipe) || partyWipe > maxWipe + 1) {
+      analysis = `Without healing, the typical PC is at ${nearPct} HP by round ${fmt1(nearDown)}, earlier than the R${FIRST_PC_DANGER_MAX_ROUND} goal. ` +
+        `Use boss DPR multiplier ${fmtMult(r.targetBossDprMult)}.`;
+    } else if (nearDown == null || nearDown > FIRST_PC_DANGER_MAX_ROUND) {
       cls = "bal-easy";
-      badge = `<span class="pacing-badge badge-easy">Very Easy</span>`;
-      analysis = `The boss-only HP budget targets R${N}, but the last PC does not reach 0 HP by R${Math.floor(maxWipe)} at current pressure. ` +
-        `To add tension, increase boss DPR to ${fmtMult(r.targetBossDprMult)}.`;
-    } else if (partyWipe != null && partyWipe <= maxWipe) {
+      badge = `<span class="pacing-badge badge-easy">Low Pressure</span>`;
+      analysis = `Without healing, the typical PC is not at ${nearPct} HP by round ${FIRST_PC_DANGER_MAX_ROUND}` +
+        (r.firstDownRound != null ? ` (only ${r.softestPcName} is in danger, at 0 HP around R${fmt1(r.firstDownRound)})` : "") +
+        `. Increase boss pressure toward ${fmtMult(r.targetBossDprMult)}.`;
+    } else {
       cls = "bal-ok";
       badge = `<span class="pacing-badge badge-ok">Balanced</span>`;
-      analysis = `The boss-only HP budget targets R${N}, and the last PC reaches 0 HP around R${fmt1(partyWipe)} with healing included. ` +
+      analysis = `Without healing, the typical PC is at ${nearPct} HP around R${fmt1(nearDown)}` +
+        (r.firstDownRound != null ? ` and ${r.softestPcName} is the first at 0 HP around R${fmt1(r.firstDownRound)}` : "") +
+        `. Boss HP budgets R${N} so the fight lasts at least R${BOSS_MINIMUM_SURVIVAL_ROUND} and ends by R${FIGHT_MAX_ROUND}. ` +
         `Recommended boss HP: ${recHp} (current: ${Math.round(bossHp)}).`;
-    } else {
-      cls = "bal-easy";
-      badge = `<span class="pacing-badge badge-easy">Easy</span>`;
-      analysis = `Party survives past the intended ${wipeWindow} full-collapse point. ` +
-        `Target boss DPR multiplier: ${fmtMult(r.targetBossDprMult)}.`;
     }
 
     const minionClearNote = mph && mph.replenishing && !mph.canClearPerWave
@@ -3970,20 +3973,15 @@
     }
   }
 
-  function perRoundDprVsPc(pcRow, mode, attacks, horizonRounds = 1, partySize = 1) {
-    const ac = Math.max(1, safeInt(pcRow.AC, 10));
+  function perRoundDprVsPc(pcRow, mode, attacks, attackUses, partySize = 1) {
     const pSize = Math.max(1, safeInt(partySize, 1));
     let total = 0;
 
-    for (const atk of attacks) {
-      const uses = effectiveUsesPerRound(atk, horizonRounds);
+    for (let a = 0; a < attacks.length; a += 1) {
+      const atk = attacks[a];
+      const uses = attackUses[a];
       if (uses <= 0) continue;
-      let dpr = 0;
-      if (atk.kind === "save") {
-        dpr = expectedSaveHalfDamage(atk.dc, getSaveBonus(pcRow, atk.save_stat), atk.damage_expr);
-      } else {
-        dpr = expectedAttackDamage(ac, atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold);
-      }
+      const dpr = expectedAttackVsPc(atk, pcRow, mode);
       const targetChance = atk.kind === "save"
         ? Math.min(pSize, Math.max(1, safeInt(atk.targets, 1))) / pSize
         : 1 / pSize;
@@ -3998,7 +3996,8 @@
     const pSize = Math.max(1, safeInt(partySize, 1));
     const baseMode = String(source.mode_select || "normal");
     const budget = source.legendary_action_budget;
-    const inactiveAttack = perRoundDprVsPc(pcRow, baseMode, attacks, rounds, pSize);
+    const attackUses = expectedAttackUses(attacks, rounds, activePartyRows(source), baseMode);
+    const inactiveAttack = perRoundDprVsPc(pcRow, baseMode, attacks, attackUses, pSize);
     const inactiveLegendary = legendaryActionsPerTargetDpr(pcRow, baseMode, legendary, budget, pSize);
     const riderMode = String(source.rider_mode || "none");
 
@@ -4010,13 +4009,14 @@
       ? { ...pcRow, AC: Math.max(1, safeInt(pcRow.AC, 10) - 2) }
       : pcRow;
     const activeMode = riderMode === "grant advantage on melee next round" ? "adv" : baseMode;
-    const activeAttack = perRoundDprVsPc(activePc, activeMode, attacks, rounds, pSize);
+    const activeAttack = perRoundDprVsPc(activePc, activeMode, attacks, attackUses, pSize);
     const activeLegendary = legendaryActionsPerTargetDpr(activePc, activeMode, legendary, budget, pSize);
 
     let noTrigger = 1;
-    for (const atk of attacks || []) {
+    for (let a = 0; a < (attacks || []).length; a += 1) {
+      const atk = attacks[a];
       if (atk.kind !== "attack" || (!atk.is_melee && source.rider_melee_only)) continue;
-      const uses = effectiveUsesPerRound(atk, rounds);
+      const uses = attackUses[a];
       if (uses <= 0) continue;
       const hitChance = hitProbs(
         Math.max(1, safeInt(pcRow.AC, 10)),
@@ -4050,6 +4050,95 @@
     const encounterUses = Math.max(0, safeInt(atk && atk.uses_encounter, 0));
     if (encounterUses <= 0) return perRound;
     return Math.min(perRound, encounterUses / Math.max(1, safeFloat(horizonRounds, 1)));
+  }
+
+  // Expected damage of one use of a boss attack against a PC it targets.
+  function expectedAttackVsPc(atk, pcRow, mode) {
+    if (atk.kind === "save") {
+      return expectedSaveHalfDamage(atk.dc, getSaveBonus(pcRow, atk.save_stat), atk.damage_expr);
+    }
+    return expectedAttackDamage(Math.max(1, safeInt(pcRow.AC, 10)), atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold);
+  }
+
+  // Party-wide expected damage of one use: mean per-target damage over the
+  // candidate PCs times the number of PCs that use reaches.
+  function attackUseValue(atk, perPcValues, candidates) {
+    if (!candidates.length) return 0;
+    let sum = 0;
+    for (const j of candidates) sum += perPcValues[j];
+    const reach = atk.kind === "save" ? Math.min(candidates.length, Math.max(1, safeInt(atk.targets, 1))) : 1;
+    return (sum / candidates.length) * reach;
+  }
+
+  // Rows sharing a Combo Group form one "any combination" multiattack slot:
+  // the boss makes as many attacks as the group's largest Uses/round, each row
+  // can still be picked at most its own Uses/round, and every attack goes to
+  // the option with the best expected damage. Ungrouped rows are their own slot.
+  function buildAttackSlots(attacks) {
+    const slots = [];
+    const byGroup = new Map();
+    (attacks || []).forEach((atk, idx) => {
+      if (atk.uses_per_round <= 0) return;
+      if (!atk.group) {
+        slots.push({ members: [idx], budget: atk.uses_per_round });
+        return;
+      }
+      let slot = byGroup.get(atk.group);
+      if (!slot) {
+        slot = { members: [], budget: 0 };
+        byGroup.set(atk.group, slot);
+        slots.push(slot);
+      }
+      slot.members.push(idx);
+      slot.budget = Math.max(slot.budget, atk.uses_per_round);
+    });
+    return slots;
+  }
+
+  // Next attack to make from a slot this round, or -1 when the slot is spent.
+  function pickSlotAttack(slot, attacks, usedThisRound, usesRemaining, valueOf) {
+    let best = -1;
+    let bestValue = -Infinity;
+    for (const a of slot.members) {
+      if (usedThisRound[a] >= attacks[a].uses_per_round || usesRemaining[a] <= 0) continue;
+      if (slot.members.length === 1) return a;
+      const value = valueOf(a);
+      if (value > bestValue) {
+        bestValue = value;
+        best = a;
+      }
+    }
+    return best;
+  }
+
+  // Expected uses per round of each attack over the horizon. Grouped slots are
+  // filled from the best option down, so an encounter-limited option spills
+  // its unused share to the next-best option.
+  function expectedAttackUses(attacks, horizonRounds, partyRows, mode) {
+    const uses = (attacks || []).map(() => 0);
+    const candidates = partyRows.map((_, j) => j);
+    for (const slot of buildAttackSlots(attacks)) {
+      const ranked = slot.members
+        .map((a) => ({
+          a,
+          value: slot.members.length > 1
+            ? attackUseValue(attacks[a], partyRows.map((pc) => expectedAttackVsPc(attacks[a], pc, mode)), candidates)
+            : 0,
+        }))
+        .sort((x, y) => y.value - x.value);
+      let remaining = slot.budget;
+      for (const { a } of ranked) {
+        if (remaining <= 0) break;
+        const u = Math.min(remaining, effectiveUsesPerRound(attacks[a], horizonRounds));
+        uses[a] = u;
+        remaining -= u;
+      }
+    }
+    return uses;
+  }
+
+  function activePartyRows(source = state) {
+    return ((source && source.party_table) || []).filter((r) => String((r && r.Name) || "").trim().length > 0);
   }
 
   function attackUseCapacity(atk) {
@@ -4220,6 +4309,7 @@
         targets: Math.max(1, safeInt(row.Targets, 1)),
         uses_per_round: Math.max(0, safeInt(row["Uses/round"], 1)),
         uses_encounter: Math.max(0, safeInt(row["Uses/encounter"], 0)),
+        group: String(row.Group || "").trim().toLowerCase(),
         is_melee: Boolean(row["Melee?"]),
         crit_threshold: Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
       });
@@ -5059,6 +5149,7 @@
       Damage: String(row.Damage || "1d6").trim() || "1d6",
       Targets: Math.max(1, safeInt(row.Targets, 1)),
       "Uses/round": Math.max(0, safeInt(row["Uses/round"], 1)),
+      Group: String(row.Group || "").trim(),
       "Uses/encounter": Math.max(0, safeInt(row["Uses/encounter"], 0)),
       "Melee?": Boolean(row["Melee?"]),
       "Enabled?": Boolean(row["Enabled?"]),
@@ -5131,6 +5222,15 @@
     let sum = 0;
     for (const v of values) sum += safeFloat(v, 0);
     return sum / values.length;
+  }
+
+  // Median that tolerates Infinity entries (e.g. a PC the boss cannot hurt).
+  function medianOf(values) {
+    if (!values.length) return 0;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    if (sorted.length % 2) return sorted[mid];
+    return (sorted[mid - 1] + sorted[mid]) / 2;
   }
 
   function percentile(values, p) {
@@ -5216,16 +5316,15 @@
     return clamp(targetEncounterRounds(source), BOSS_TUNE_MIN_ROUNDS, BOSS_TUNE_MAX_ROUNDS);
   }
 
+  // Party collapse is no longer a tuning target; the party should simply still
+  // be standing when the fight hits its round-11 ceiling. These bound the
+  // informational "last PC at 0 HP" projection and the simulation horizon.
   function targetPartyWipeMinRound() {
-    return BOSS_TUNE_MAX_ROUNDS + TPK_GRACE_MIN_ROUNDS;
+    return FIGHT_MAX_ROUND;
   }
 
   function targetPartyWipeMaxRound() {
-    return BOSS_TUNE_MAX_ROUNDS + TPK_GRACE_MAX_ROUNDS;
-  }
-
-  function targetPartyWipeRound() {
-    return BOSS_TUNE_MAX_ROUNDS + (TPK_GRACE_MIN_ROUNDS + TPK_GRACE_MAX_ROUNDS) / 2;
+    return FIGHT_MAX_ROUND + 2;
   }
 
   function round2(v) {

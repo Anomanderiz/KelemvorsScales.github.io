@@ -78,9 +78,9 @@ Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use
 
 The Balancer display is split into two layers. **Deterministic Budget & Diagnostics** shows repeatable average-damage HP and pressure calculations used to propose the encounter. **Monte Carlo Validation** is the final authority for the configured probability goals and shows dedicated Boss-Blitz cards for win-by-target, unassisted first-down risk, TPK risk, and late TPK risk among fights still unresolved after the target round.
 
-Tune Everything treats durability and lethality as separate budgets. Boss HP is based on party DPR against the boss alone for a 7–10 round target, so Boss Blitz never makes the boss itself cheaper. With Boss HP Pacing enabled, the boss cannot fall before round 7; four Legendary Resistances also smooth exceptional pre-target burst.
+Tune Everything treats durability and lethality as separate budgets. Boss HP is based on party DPR against the boss alone for a 6–9 round target (default 8), so Boss Blitz never makes the boss itself cheaper. With Boss HP Pacing enabled, the boss cannot fall before round 6; four Legendary Resistances also smooth exceptional pre-target burst.
 
-Encounter damage is calibrated on the Boss-Blitz baseline against two constraints: one PC reaching 0 HP around rounds 5–6 without healing (recurring THP still counts), and the last PC reaching 0 HP around rounds 12–13 with both recurring THP and supplied healing included. The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.
+Encounter damage is calibrated on the Boss-Blitz baseline against one goal: by round 6, the typical (median) PC is down or at 25% HP or less without healing (recurring THP still counts). Using the median PC means a single low-AC or low-HP outlier drops earlier rather than capping boss pressure for the whole party. Full Analysis flags fights that run past round 11 in more than 10% of trials. The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.
 
 Replenishing minions support one- or two-round wave cadence. Auto-tuning never reduces them below 20 HP. If an every-round Minion-Clear comparison is still over the TPK ceiling at 20 HP, their wave cadence shifts to every other round before boss HP is touched.
 
@@ -178,14 +178,14 @@ Re-run until guardrails show âœ“.
   2. **Boss Kit** tab: add the bossâ€™s attacks (to-hit/DC, damage, save targets, uses/round, melee?), plus **lair**, **recharge**, and any **on-hit rider**.
   3. **âš”ï¸ Encounter MC** tab: set **Trials** (10â€“30k), **Max Rounds** (~13), **Initiative** (random), and the **Party DPR CV** (variance, default 0.60).
   4. Click **Run Encounter Simulation**. Read each strategy's **party win**, **party wipe**, and **still fighting** rates, then use typical resolution and remaining boss HP to see why failures occurred.
-  5. If pacing is off, hit **Tune Everything** to set boss HP for 7–10 rounds, first-down pressure for rounds 5–6, and full-collapse pressure for rounds 12–13.
+  5. If pacing is off, hit **Tune Everything** to set boss HP for a 6–9 round target and pressure so the typical PC is down or near down by round 6.
 
 ---
 
 ## Features
 
 - **Encounter Monte Carlo:** full fights under the Boss-Blitz baseline and Minion-Clear comparison, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, minions, per-target THP/round, expected party healing, regen/resistance, and PCs dropping.
-- **Tune Everything:** sets boss HP from boss-only party DPR, independently scales encounter pressure for the round 5–6 first-down and round 12–13 collapse budgets, and tunes ignored-minion pressure without allowing either strategy above the TPK ceiling. Replenishing minions retain at least 20 HP and fall back to every-other-round waves when needed.
+- **Tune Everything:** sets boss HP from boss-only party DPR, independently scales encounter pressure so the typical PC is down or near down by round 6, and tunes ignored-minion pressure without allowing either strategy above the TPK ceiling. Replenishing minions retain at least 20 HP and fall back to every-other-round waves when needed.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)
   - `P(TTK â‰¥ slow) â‰¤ cap` (avoid slogs)
