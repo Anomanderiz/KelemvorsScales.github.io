@@ -76,13 +76,13 @@ Monte Carlo of boss damage into a single PC over N rounds (useful for burst safe
 
 Full fight simulation with Trials, Max Rounds, Initiative, Party DPR CV, and Use Novaâ†’Effective DPR toggle. Every analysis runs the Boss-Blitz baseline and Minion-Clear comparison side by side, including separate survival curves, TTK distributions, casualty timing, and TPK risk.
 
-The Balancer display is split into two layers. **Deterministic Budget & Diagnostics** shows repeatable average-damage HP and pressure calculations used to propose the encounter. **Monte Carlo Validation** is the final authority for the configured probability goals and shows dedicated Boss-Blitz cards for win-by-target, unassisted first-down risk, TPK risk, and late TPK risk among fights still unresolved after the target round.
+The Balancer checks two goals by simulating thousands of fights: by the end of round 6 a PC is down or at 25% HP or less without healing (in at least 75% of fights), and the boss dies no earlier than round 6 and no later than round 11 (each miss allowed in at most 10% of fights). The **Encounter Check** card states each goal in plain language with a ✓/✗, says what is wrong and how to fix it, and shows two charts: the round the boss dies, and how quickly a PC gets near death. The older average-damage estimates and raw simulation panels are collapsed underneath; the average-damage view is unreliable when PCs get large refreshing temporary HP.
 
-Tune Everything treats durability and lethality as separate budgets. Boss HP is based on party DPR against the boss alone for a 6–9 round target (default 8), so Boss Blitz never makes the boss itself cheaper. With Boss HP Pacing enabled, the boss cannot fall before round 6; four Legendary Resistances also smooth exceptional pre-target burst.
+Tune Everything first scales boss damage (and bakes it into the stat block) until a PC is near death by round 6 in about 75% of fights. It then measures how much damage the party deals by each round and picks the boss HP that best keeps the fight between rounds 6 and 11. If no HP can do both, because party damage swings too much, it turns on **Legendary Resistance pacing**: at the start of rounds 2–6, if the boss is below a listed HP (the pace that would kill it before round 7), it burns one of 3 Legendary Resistances for resistance to all damage until the next round. The Encounter Check lists those HP thresholds round by round and how often each burn happens. It runs two passes so the damage check accounts for bosses that die during round 6.
 
-Encounter damage is calibrated on the Boss-Blitz baseline against one goal: by round 6, the typical (median) PC is down or at 25% HP or less without healing (recurring THP still counts). Using the median PC means a single low-AC or low-HP outlier drops earlier rather than capping boss pressure for the whole party. Full Analysis flags fights that run past round 11 in more than 10% of trials. The configured TPK ceiling applies to both Boss Blitz and Minion Clear and cannot be set above 25%.
+The party wipe limit (at most 25%) is a safety check: it is reported, not tuned against, so a conflict with the round-6 danger goal is shown as a problem to resolve rather than silently weakening the boss.
 
-Replenishing minions support one- or two-round wave cadence. Auto-tuning never reduces them below 20 HP. If an every-round Minion-Clear comparison is still over the TPK ceiling at 20 HP, their wave cadence shifts to every other round before boss HP is touched.
+Minions are optional: untick **Include minions in this fight** under Boss Kit → Minion Pack to run a boss-only fight without losing the minion settings. Tune Everything simulates minions exactly as configured and never changes their stats. Replenishing minions support one- or two-round wave cadence.
 
 Outcome summary (victory, wipe, or still fighting), typical resolution rounds, boss HP remaining on failures, cumulative outcome curves, and final outcome mix.
 
@@ -148,7 +148,7 @@ Save-for-half: expected damage = 0.5+0.5â‹…ð‘ƒ(fail) times average da
 
 Initiative: if the boss acts first, PCs might lose actions that round if they drop before swinging.
 
-Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. THP is per target, while expected healing is entered as a party total and divided evenly across active PCs.
+Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. Refreshing THP (e.g. `1d6+8` for a cleric's aura) is rolled for each PC every round; it does not stack, and a higher roll replaces leftover THP. Expected healing is entered as a party total and divided evenly across active PCs.
 
 Targeting: every individual attack use independently selects a random living PC. Each save ability has its own target count and independently selects up to that many distinct living PCs whenever it fires. Minion attacks and saves follow the same rules. Minion Clear reduces the number of acting minions as the pack takes damage; Boss Blitz leaves the full configured count active until the boss dies.
 
@@ -164,7 +164,7 @@ Want fewer slogs? Lower boss HP/resist slightly, add lair/recharge that closes f
 
 Check lethality: the unassisted first-down chance should become meaningful by round 6, while TPK stays at or below the configured ceiling (25% maximum).
 
-Tune Everything to set the boss-only HP budget, calibrate encounter damage, then tune ignored-minion pressure against the round-6 first-casualty target.
+Tune Everything to set boss damage for the round-6 danger goal and boss HP for a round 6–11 fight, adding Legendary Resistance pacing only when HP alone can't do it.
 
 Re-run until guardrails show âœ“.
 
@@ -178,14 +178,14 @@ Re-run until guardrails show âœ“.
   2. **Boss Kit** tab: add the bossâ€™s attacks (to-hit/DC, damage, save targets, uses/round, melee?), plus **lair**, **recharge**, and any **on-hit rider**.
   3. **âš”ï¸ Encounter MC** tab: set **Trials** (10â€“30k), **Max Rounds** (~13), **Initiative** (random), and the **Party DPR CV** (variance, default 0.60).
   4. Click **Run Encounter Simulation**. Read each strategy's **party win**, **party wipe**, and **still fighting** rates, then use typical resolution and remaining boss HP to see why failures occurred.
-  5. If pacing is off, hit **Tune Everything** to set boss HP for a 6–9 round target and pressure so the typical PC is down or near down by round 6.
+  5. If the Encounter Check shows a ✗, hit **Tune Everything**: it sets boss damage and HP so a PC is near death by round 6 and the fight ends by round 11, and adds a Legendary Resistance schedule if needed.
 
 ---
 
 ## Features
 
 - **Encounter Monte Carlo:** full fights under the Boss-Blitz baseline and Minion-Clear comparison, round-by-round: initiative, attacks, saves, crits (house-rule: *max dice + one rolled*), lair cadence, recharge chance, riders, minions, per-target THP/round, expected party healing, regen/resistance, and PCs dropping.
-- **Tune Everything:** sets boss HP from boss-only party DPR, independently scales encounter pressure so the typical PC is down or near down by round 6, and tunes ignored-minion pressure without allowing either strategy above the TPK ceiling. Replenishing minions retain at least 20 HP and fall back to every-other-round waves when needed.
+- **Tune Everything:** scales boss damage so a PC is near death by round 6 in about 75% of fights, picks boss HP so the boss rarely dies before round 6 or survives past round 11, and adds a round-by-round Legendary Resistance pacing plan only when HP alone can't hit both. Minions are simulated as configured and never changed.
 - **Guardrail read-outs:** configurable thresholds with âœ“/âœ—:
   - `P(TTK â‰¤ fast) â‰¤ cap` (avoid steamrolls)
   - `P(TTK â‰¥ slow) â‰¤ cap` (avoid slogs)

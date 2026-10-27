@@ -917,3 +917,26 @@ td select {
   .card           { padding: 11px; }
   .card h2        { font-size: .88rem; }
 }
+
+/* Collapsible advanced settings and diagnostics on the Balancer tab */
+.advanced-settings { margin: 4px 0 14px; }
+.advanced-settings > summary,
+.diagnostics > summary {
+  cursor: pointer;
+  color: var(--parchment);
+  font-weight: 600;
+  padding: 8px 0;
+}
+.diagnostics { margin-top: 8px; }
+.diagnostics > summary { padding: 12px 4px; }
+.check-headline { margin: 0 0 10px; font-size: 1.05em; }
+.check-goals { list-style: none; padding: 0; margin: 10px 0; }
+.check-goals li { padding: 4px 0; }
+.check-goals .goal-mark { display: inline-block; width: 1.4em; font-weight: 700; }
+.check-goals .goal-ok .goal-mark { color: var(--gold-lit); }
+.check-goals .goal-miss .goal-mark { color: var(--danger-lit); }
+.check-problems { margin: 6px 0 10px; }
+.check-charts { margin-top: 16px; }
+.lr-plan ul { margin: 8px 0; }
+#encounterCheckVerdict .pacing-advice { color: var(--text-soft); }
+#encounterCheckPacing .lr-plan { color: var(--text); border-top: none; }

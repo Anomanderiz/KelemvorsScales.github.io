@@ -293,8 +293,9 @@
 
         <div class="card">
           <h2>Minion Pack</h2>
-          <p class="hint">Boss Blitz is the default: all party damage goes to the boss while the full pack remains active. Minion Clear is an optional DM-facing comparison where the party spends attacks on the pack first. Tune Everything keeps minions at 20+ HP and can shift unsafe replenishing waves from every round to every other round.</p>
+          <p class="hint">Optional. When included, minions attack every round while the party focuses the boss. Tune Everything simulates them as you set them here; it does not change minion stats.</p>
           <div class="form-grid">
+            <label class="checkbox"><input id="optMinionsEnabled" type="checkbox" checked> Include minions in this fight</label>
             <label>Minion Count
               <input id="optMinionCount" type="number" min="0" max="99" step="1">
             </label>
@@ -368,28 +369,16 @@
             <h2>Encounter Balancer</h2>
           </div>
           <p class="hint">
-            Boss Blitz is the pacing baseline: the party attacks the boss while configured minions remain active.
-            Full Analysis also shows Minion Clear as a secondary tactical possibility for the DM to consider.
-            Goals: the boss survives at least 6 rounds and is dead by round 11; by round 6, the typical (median) PC is down or at 25% HP or less without healing. Pressure is aimed at the typical PC, so a single low-AC PC drops earlier instead of capping the boss.
+            Two goals, checked by simulating thousands of fights: by the end of round 6 a PC is down or at 25% HP or less without healing,
+            and the boss dies no earlier than round 6 and no later than round 11.
+            <strong>Tune Everything</strong> sets boss damage and HP to hit both, and adds Legendary Resistance pacing only if HP alone can't.
           </p>
           <div class="form-grid">
-            <label>Target Encounter Rounds
-              <input id="pacingRounds" type="number" min="6" max="9" step="1">
-            </label>
-            <label>Encounter TPK Cap (0-0.25)
+            <label>Party Wipe Limit (0-0.25)
               <input id="tuneTpkCap" type="number" min="0" max="0.25" step="0.001">
-            </label>
-            <label>Boss DPR Multiplier
-              <input id="optBossDprMult" type="number" min="0" max="20" step="0.01">
             </label>
             <label>Trials
               <input id="encTrials" type="number" min="1000" max="300000" step="1000">
-            </label>
-            <label>Max Rounds
-              <input id="encMaxRounds" type="number" min="1" max="50" step="1">
-            </label>
-            <label>Party DPR CV
-              <input id="encDprCv" type="number" min="0.05" max="2" step="0.01">
             </label>
             <label>Initiative
               <select id="encInitiative">
@@ -398,20 +387,54 @@
                 <option value="boss_first">Boss First</option>
               </select>
             </label>
-            <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR to Effective</label>
-            <label class="checkbox"><input id="tightPacingEnabled" type="checkbox" checked> Boss HP Pacing (round-6 floor + 4 resistances)</label>
-            <label>Boss-Blitz Win-by-Target Goal (0.50–0.95)
-              <input id="tuneKillRate" type="number" min="0.50" max="0.95" step="0.01">
-            </label>
-            <label>Boss-Blitz Victory Band Limit (rounds)
-              <input id="tuneBandMax" type="number" min="0.5" max="10" step="0.1">
-            </label>
+            <label class="checkbox"><input id="tightPacingEnabled" type="checkbox"> Legendary Resistance pacing</label>
           </div>
+          <details class="advanced-settings">
+            <summary>Advanced settings</summary>
+            <div class="form-grid">
+              <label>Boss DPR Multiplier
+                <input id="optBossDprMult" type="number" min="0" max="20" step="0.01">
+              </label>
+              <label>Max Rounds
+                <input id="encMaxRounds" type="number" min="1" max="50" step="1">
+              </label>
+              <label>Party DPR CV
+                <input id="encDprCv" type="number" min="0.05" max="2" step="0.01">
+              </label>
+              <label class="checkbox"><input id="encUseNova" type="checkbox" checked> Convert DPR to Effective</label>
+              <label>HP Budget Rounds (diagnostics only)
+                <input id="pacingRounds" type="number" min="6" max="9" step="1">
+              </label>
+              <label>Win-by-Budget Goal (diagnostics only)
+                <input id="tuneKillRate" type="number" min="0.50" max="0.95" step="0.01">
+              </label>
+              <label>Victory Band Limit (diagnostics only)
+                <input id="tuneBandMax" type="number" min="0.5" max="10" step="0.1">
+              </label>
+            </div>
+          </details>
           <div class="button-row">
             <button id="btnRunEncounter" class="btn btn-accent">Run Full Analysis</button>
             <button id="btnAutoTuneAll" class="btn btn-accent">Tune Everything</button>
           </div>
         </div>
+
+        <div class="card" id="encounterCheckCard">
+          <h2>Encounter Check</h2>
+          <div id="encounterCheckVerdict" class="pacing-balance">Run Full Analysis to check this encounter, or Tune Everything to fix it.</div>
+          <div class="split split-charts check-charts">
+            <div class="chart-wrap">
+              <canvas id="checkDeathChart" aria-label="Round the boss dies"></canvas>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="checkDangerChart" aria-label="Share of fights with a PC near death by round"></canvas>
+            </div>
+          </div>
+          <div id="encounterCheckPacing"></div>
+        </div>
+
+        <details class="diagnostics">
+          <summary>Average-damage estimates (straight-line math; unreliable with refreshing temp HP)</summary>
 
         <div class="card analysis-heading analysis-heading-det">
           <h2>1. Deterministic Budget &amp; Diagnostics</h2>
@@ -454,6 +477,10 @@
           <div id="pacingTable" class="table-mount"></div>
         </div>
 
+        </details>
+
+        <details class="diagnostics">
+          <summary>Simulation details (raw numbers and older checks)</summary>
         <div class="card analysis-heading analysis-heading-mc">
           <h2>2. Monte Carlo Validation — Final Authority</h2>
           <p class="hint">Randomized full encounters measure whether the actual probability targets are met. Boss Blitz is authoritative; Minion Clear is the secondary DM-facing comparison.</p>
@@ -513,6 +540,7 @@
             </div>
           </div>
         </div>
+        </details>
 
       </section>
 
