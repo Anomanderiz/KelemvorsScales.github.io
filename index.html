@@ -101,10 +101,12 @@
             <div class="button-row">
               <button id="btnAddAttackRow" class="btn btn-accent">+ Add Attack</button>
               <button id="btnAddLimitedAttackRow" class="btn">+ Limited Ability</button>
+              <button id="btnAddOnHitAttackRow" class="btn">+ On-hit Save Attack</button>
             </div>
           </div>
           <p class="hint">Each attack use independently selects a random living PC. Save abilities select up to their Save Targets value without duplicates each time they fire.
-            <strong>Combo Group:</strong> give rows the same group name when the multiattack lets the boss use them "in any combination" (e.g. Claw and Rend both 2 uses, group <em>flex</em>). The group makes as many attacks as its largest Uses/round, each row is used at most its own Uses/round, and every attack goes to the option with the best expected damage, so damage is not double-counted.</p>
+            <strong>Combo Group:</strong> give rows the same group name when the multiattack lets the boss use them "in any combination" (e.g. Claw and Rend both 2 uses, group <em>flex</em>). The group makes as many attacks as its largest Uses/round, each row is used at most its own Uses/round, and every attack goes to the option with the best expected damage, so damage is not double-counted.
+            <strong>On-hit save:</strong> for attacks like a poisoned blade. When the attack hits (crits included), the target makes the On-hit Save against the On-hit DC and takes the On-hit Dmg, halved on a success (<em>half</em>) or avoided entirely (<em>none</em>). Only the weapon damage crits; the on-hit damage never does. Leave On-hit Dmg blank or DC at 0 for a plain attack. Save rows ignore these columns.</p>
           <div id="attacksTable" class="table-mount"></div>
         </div>
 
@@ -118,7 +120,7 @@
               <button id="btnAddLegendaryAction" class="btn btn-accent">+ Add Legendary</button>
             </div>
           </div>
-          <p class="hint">Attack and auto actions select one random living PC. Save actions use their own Save Targets value.</p>
+          <p class="hint">Attack and auto actions select one random living PC. Save actions use their own Save Targets value. Attack actions can carry an on-hit save, same as Boss Attacks.</p>
           <div id="legendaryTable" class="table-mount"></div>
         </div>
 

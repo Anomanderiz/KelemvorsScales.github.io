@@ -176,6 +176,18 @@
     { key: "Uptime", label: "Uptime", type: "number", step: "0.01", min: "0", max: "1", parser: (v) => clamp(safeFloat(v, 0.85), 0, 1) },
   ];
 
+  // On-hit save: when an attack-roll row hits (crits included), the target
+  // makes this save against the follow-up damage (e.g. a poisoned blade).
+  // The follow-up damage never crits. Ignored on save/auto rows.
+  const ON_HIT_SUCCESS_OPTIONS = ["half", "none"];
+  const notAttackRow = (row) => String((row && row.Type) || "attack").toLowerCase() !== "attack";
+  const ON_HIT_COLUMNS = [
+    { key: "On-hit DC", label: "On-hit DC", type: "number", step: "1", min: "0", disabledFor: notAttackRow, parser: (v) => Math.max(0, safeInt(v, 0)) },
+    { key: "On-hit Save", label: "On-hit Save", type: "select", options: SAVE_KEYS, disabledFor: notAttackRow, parser: (v) => normalizeSaveStat(v, "CON") },
+    { key: "On-hit Damage", label: "On-hit Dmg", type: "text", disabledFor: notAttackRow, parser: (v) => String(v).trim() },
+    { key: "On-hit Success", label: "On Save", type: "select", options: ON_HIT_SUCCESS_OPTIONS, disabledFor: notAttackRow, parser: (v) => normalizeOnHitSuccess(v) },
+  ];
+
   const ATTACK_COLUMNS = [
     { key: "Name", label: "Name", type: "text", parser: (v) => String(v).trim() },
     { key: "Type", label: "Type", type: "select", options: ["attack", "save"], parser: (v) => (String(v).toLowerCase() === "save" ? "save" : "attack") },
@@ -184,6 +196,7 @@
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
+    ...ON_HIT_COLUMNS,
     { key: "Targets", label: "Save Targets", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Uses/round", label: "Uses/round", type: "number", step: "1", min: "0", parser: (v) => Math.max(0, safeInt(v, 1)) },
     { key: "Group", label: "Combo Group", type: "text", parser: (v) => String(v).trim() },
@@ -200,6 +213,7 @@
     { key: "DC", label: "DC", type: "number", step: "1", parser: (v) => safeInt(v, 0) },
     { key: "Save", label: "Save", type: "select", options: SAVE_KEYS, parser: (v) => (SAVE_KEYS.includes(String(v).toUpperCase()) ? String(v).toUpperCase() : "DEX") },
     { key: "Damage", label: "Damage", type: "text", parser: (v) => String(v).trim() || "0" },
+    ...ON_HIT_COLUMNS,
     { key: "Targets", label: "Save Targets", type: "number", step: "1", min: "1", parser: (v) => Math.max(1, safeInt(v, 1)) },
     { key: "Cost", label: "Cost", type: "number", step: "1", min: "1", max: "4", parser: (v) => clamp(safeInt(v, 1), 1, 4) },
     { key: "Uses/round", label: "Use/R", type: "number", step: "1", min: "0", max: "1", parser: (v) => clamp(safeInt(v, 1), 0, 1) },
@@ -285,7 +299,7 @@
     const ids = [
       "btnSaveLocal", "btnExportJson", "inputImportJson", "statusBar",
       "btnAddPartyRow", "partyTable", "dprTable", "novaTable",
-      "btnAddAttackRow", "btnAddLimitedAttackRow", "attacksTable", "optLegendaryBudget", "btnAddLegendaryAction", "legendaryTable", "btnAddPhaseMechanic", "phaseTable",
+      "btnAddAttackRow", "btnAddLimitedAttackRow", "btnAddOnHitAttackRow", "attacksTable", "optLegendaryBudget", "btnAddLegendaryAction", "legendaryTable", "btnAddPhaseMechanic", "phaseTable",
       "optModeSelect", "optThpExpr", "optPartyHealingPerRound", "optBossHp", "optBossAc", "optResistFactor", "optBossRegen", "optBossDprMult",
       "optLairEnabled", "optLairAvg", "optLairFormula", "optLairTargets", "optLairEveryN",
       "optRechEnabled", "optRechargeText", "optRechAvg", "optRechFormula", "optRechTargets",
@@ -421,6 +435,31 @@
       renderAttackSection();
       refreshReport();
       setStatus("Added limited ability row.", 1500);
+    });
+
+    els.btnAddOnHitAttackRow.addEventListener("click", () => {
+      state.attacks_table.push({
+        Name: "Poisoned Blade",
+        Type: "attack",
+        "Attack bonus": 7,
+        Crit: 20,
+        DC: 0,
+        Save: "DEX",
+        Damage: "1d8+4",
+        "On-hit DC": 14,
+        "On-hit Save": "CON",
+        "On-hit Damage": "2d8",
+        "On-hit Success": "half",
+        Targets: 1,
+        "Uses/round": 1,
+        "Uses/encounter": 0,
+        "Melee?": true,
+        "Enabled?": true,
+      });
+      persistState();
+      renderAttackSection();
+      refreshReport();
+      setStatus("Added on-hit save attack row.", 1500);
     });
 
     els.btnAddLegendaryAction.addEventListener("click", () => {
@@ -782,6 +821,7 @@
         state.attacks_table[rowIndex][key] = value;
         state.attacks_table[rowIndex] = sanitizeAttackRow(state.attacks_table[rowIndex]);
         persistState();
+        if (key === "Type") renderAttackSection();
         refreshReport();
       },
       onRemoveRow: (rowIndex) => {
@@ -804,6 +844,7 @@
         state.legendary_actions_table[rowIndex][key] = value;
         state.legendary_actions_table[rowIndex] = sanitizeLegendaryRow(state.legendary_actions_table[rowIndex]);
         persistState();
+        if (key === "Type") renderLegendarySection();
         refreshReport();
       },
       onRemoveRow: (rowIndex) => {
@@ -855,7 +896,7 @@
       columns.forEach((col) => {
         const td = document.createElement("td");
         const input = createCellInput(col, row[col.key]);
-        if (col.readOnly) {
+        if (col.readOnly || (typeof col.disabledFor === "function" && col.disabledFor(row))) {
           input.disabled = true;
         }
         input.addEventListener("change", () => {
@@ -1910,6 +1951,8 @@
     return [
       ...state.attacks_table.filter((row) => row["Enabled?"]).map((row) => [row.Name || "Attack", row.Damage]),
       ...state.legendary_actions_table.filter((row) => row["Enabled?"]).map((row) => [row.Name || "Legendary action", row.Damage]),
+      ...state.attacks_table.filter((row) => row["Enabled?"] && onHitSaveFromRow(row)).map((row) => [`${row.Name || "Attack"} on-hit`, row["On-hit Damage"]]),
+      ...state.legendary_actions_table.filter((row) => row["Enabled?"] && onHitSaveFromRow(row)).map((row) => [`${row.Name || "Legendary action"} on-hit`, row["On-hit Damage"]]),
       ...state.phase_table.filter((row) => row["Enabled?"]).map((row) => [row.Name || "Round mechanic", row.Damage]),
       ...(state.lair_enabled ? [["Lair action", state.lair_formula]] : []),
       ...(state.rech_enabled ? [["Recharge power", state.rech_formula]] : []),
@@ -2327,6 +2370,7 @@
             if (isHit) {
               const dmg = isCrit ? rollDamageCrunchyCritOne(atk.damage_expr) : rollDamageOne(atk.damage_expr);
               roundDamage += dmg;
+              if (atk.on_hit) roundDamage += rollOnHitDamage(atk.on_hit, saveBonuses[atk.on_hit.save_stat] || 0);
               if (atk.is_melee || !opts.rider_melee_only) {
                 triggeredRider = true;
               }
@@ -2362,6 +2406,7 @@
           const isHit = isCrit || (roll !== 1 && roll + action.attack_bonus >= currentAc);
           if (isHit) {
             roundDamage += isCrit ? rollDamageCrunchyCritOne(action.damage_expr) : rollDamageOne(action.damage_expr);
+            if (action.on_hit) roundDamage += rollOnHitDamage(action.on_hit, saveBonuses[action.on_hit.save_stat] || 0);
           }
         }
 
@@ -2698,6 +2743,10 @@
 
                 if (isHit) {
                   rawDealt = isCrit ? rollDamageCrunchyCritOne(atk.damage_expr) : rollDamageOne(atk.damage_expr);
+                  if (atk.on_hit) {
+                    const onHitIdx = saveIndex[atk.on_hit.save_stat] ?? saveIndex.CON;
+                    rawDealt += rollOnHitDamage(atk.on_hit, pcSaves[target][onHitIdx]);
+                  }
                   if (atk.is_melee || !opts.rider_melee_only) {
                     riderTrig[target] = true;
                   }
@@ -3198,10 +3247,12 @@
     state.attacks_table = state.attacks_table.map((row) => ({
       ...row,
       Damage: scaleDamageExpression(row.Damage, mult),
+      "On-hit Damage": scaleOnHitDamage(row, mult, scaleDamageExpression),
     })).map(sanitizeAttackRow);
     state.legendary_actions_table = state.legendary_actions_table.map((row) => ({
       ...row,
       Damage: scaleDamageExpression(row.Damage, mult),
+      "On-hit Damage": scaleOnHitDamage(row, mult, scaleDamageExpression),
     })).map(sanitizeLegendaryRow);
     state.phase_table = state.phase_table.map((row) => ({
       ...row,
@@ -3232,14 +3283,20 @@
       const oldDamage = String(row.Damage || "0");
       const nextDamage = scaleDamageExpressionStatic(oldDamage, mult);
       if (nextDamage !== oldDamage) changes.push(`${row.Name || "Attack"} damage: ${oldDamage} -> ${nextDamage}`);
-      return sanitizeAttackRow({ ...row, Damage: nextDamage });
+      const oldOnHit = String(row["On-hit Damage"] || "");
+      const nextOnHit = scaleOnHitDamage(row, mult, scaleDamageExpressionStatic);
+      if (onHitSaveFromRow(row) && nextOnHit !== oldOnHit) changes.push(`${row.Name || "Attack"} on-hit damage: ${oldOnHit} -> ${nextOnHit}`);
+      return sanitizeAttackRow({ ...row, Damage: nextDamage, "On-hit Damage": nextOnHit });
     });
 
     state.legendary_actions_table = state.legendary_actions_table.map((row) => {
       const oldDamage = String(row.Damage || "0");
       const nextDamage = scaleDamageExpressionStatic(oldDamage, mult);
       if (Boolean(row["Enabled?"]) && nextDamage !== oldDamage) changes.push(`${row.Name || "Legendary action"} damage: ${oldDamage} -> ${nextDamage}`);
-      return sanitizeLegendaryRow({ ...row, Damage: nextDamage });
+      const oldOnHit = String(row["On-hit Damage"] || "");
+      const nextOnHit = scaleOnHitDamage(row, mult, scaleDamageExpressionStatic);
+      if (Boolean(row["Enabled?"]) && onHitSaveFromRow(row) && nextOnHit !== oldOnHit) changes.push(`${row.Name || "Legendary action"} on-hit damage: ${oldOnHit} -> ${nextOnHit}`);
+      return sanitizeLegendaryRow({ ...row, Damage: nextDamage, "On-hit Damage": nextOnHit });
     });
 
     state.phase_table = state.phase_table.map((row) => {
@@ -3996,7 +4053,16 @@
     if (atk.kind === "save") {
       return expectedSaveHalfDamage(atk.dc, getSaveBonus(pcRow, atk.save_stat), atk.damage_expr);
     }
-    return expectedAttackDamage(Math.max(1, safeInt(pcRow.AC, 10)), atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold);
+    const ac = Math.max(1, safeInt(pcRow.AC, 10));
+    return expectedAttackDamage(ac, atk.attack_bonus, atk.damage_expr, mode, atk.crit_threshold)
+      + expectedOnHitAfterAttack(atk, pcRow, ac, mode);
+  }
+
+  // Expected on-hit save damage of one attack-roll use: P(hit) x save damage.
+  function expectedOnHitAfterAttack(atk, pcRow, ac, mode) {
+    if (!atk || !atk.on_hit) return 0;
+    const pHit = hitProbs(ac, safeInt(atk.attack_bonus, 0), mode, atk.crit_threshold ?? 20)[2];
+    return pHit * expectedOnHitDamage(atk.on_hit, getSaveBonus(pcRow, atk.on_hit.save_stat));
   }
 
   // Party-wide expected damage of one use: per-target damage averaged over the
@@ -4238,7 +4304,10 @@
     const isCrit = r >= (action.crit_threshold ?? 20);
     const isHit = isCrit || (r !== 1 && r + action.attack_bonus >= currentAc[target]);
     if (!isHit) return 0;
-    return isCrit ? rollDamageCrunchyCritOne(action.damage_expr) : rollDamageOne(action.damage_expr);
+    const weapon = isCrit ? rollDamageCrunchyCritOne(action.damage_expr) : rollDamageOne(action.damage_expr);
+    if (!action.on_hit) return weapon;
+    const saveIdx = saveIndex[action.on_hit.save_stat] ?? saveIndex.CON;
+    return weapon + rollOnHitDamage(action.on_hit, pcSaves[target][saveIdx]);
   }
 
   function bossDprMultiplier(opts) {
@@ -4303,9 +4372,47 @@
         group: String(row.Group || "").trim().toLowerCase(),
         is_melee: Boolean(row["Melee?"]),
         crit_threshold: Math.max(2, Math.min(20, safeInt(row["Crit"], 20))),
+        on_hit: onHitSaveFromRow(row),
       });
     }
     return out;
+  }
+
+  // The on-hit save carried by an attack-roll row, or null when there is none.
+  function onHitSaveFromRow(row) {
+    if (notAttackRow(row)) return null;
+    const damageExpr = String((row && row["On-hit Damage"]) || "").trim();
+    const dc = safeInt(row && row["On-hit DC"], 0);
+    if (!damageExpr || dc <= 0 || averageDamage(damageExpr) <= 0) return null;
+    return {
+      dc,
+      save_stat: normalizeSaveStat(row["On-hit Save"], "CON"),
+      damage_expr: damageExpr,
+      success_mult: normalizeOnHitSuccess(row["On-hit Success"]) === "none" ? 0 : 0.5,
+    };
+  }
+
+  // Expected on-hit damage once the attack has hit (no crit doubling).
+  function expectedOnHitDamage(onHit, saveBonus) {
+    if (!onHit) return 0;
+    const pFail = pSaveFail(onHit.dc, saveBonus);
+    return (onHit.success_mult + (1 - onHit.success_mult) * pFail) * averageDamage(onHit.damage_expr);
+  }
+
+  function rollOnHitDamage(onHit, saveBonus) {
+    if (!onHit) return 0;
+    const success = randomInt(1, 20) + saveBonus >= onHit.dc;
+    const dmg = rollDamageOne(onHit.damage_expr);
+    return success ? onHit.success_mult * dmg : dmg;
+  }
+
+  function normalizeSaveStat(value, fallback = "DEX") {
+    const stat = String(value || "").toUpperCase();
+    return SAVE_KEYS.includes(stat) ? stat : fallback;
+  }
+
+  function normalizeOnHitSuccess(value) {
+    return String(value || "").toLowerCase() === "none" ? "none" : "half";
   }
 
   function legendaryActionsEnabledFromTable(tbl) {
@@ -4331,6 +4438,7 @@
       cost: clamp(safeInt(row.Cost, 1), 1, 4),
       uses_per_round: clamp(safeInt(row["Uses/round"], 1), 0, 1),
       crit_threshold: Math.max(2, Math.min(20, safeInt(row.Crit, 20))),
+      on_hit: onHitSaveFromRow(row),
     };
   }
 
@@ -4371,13 +4479,14 @@
     if ((action && action.kind) === "save") {
       return expectedSaveHalfDamage(action.dc, getSaveBonus(pcRow, action.save_stat), action.damage_expr);
     }
+    const ac = Math.max(1, safeInt(pcRow.AC, 10));
     return expectedAttackDamage(
-      Math.max(1, safeInt(pcRow.AC, 10)),
+      ac,
       safeInt(action && action.attack_bonus, 0),
       action && action.damage_expr,
       mode,
       action && action.crit_threshold
-    );
+    ) + expectedOnHitAfterAttack(action, pcRow, ac, mode);
   }
 
   function expectedAttackDamage(ac, attackBonus, dmgExpr, mode = "normal", critThreshold = 20) {
@@ -5142,6 +5251,7 @@
       DC: safeInt(row.DC, 0),
       Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
       Damage: String(row.Damage || "1d6").trim() || "1d6",
+      ...sanitizeOnHitFields(row),
       Targets: Math.max(1, safeInt(row.Targets, 1)),
       "Uses/round": Math.max(0, safeInt(row["Uses/round"], 1)),
       Group: String(row.Group || "").trim(),
@@ -5161,11 +5271,27 @@
       DC: safeInt(row.DC, 0),
       Save: SAVE_KEYS.includes(String(row.Save || "DEX").toUpperCase()) ? String(row.Save).toUpperCase() : "DEX",
       Damage: String(row.Damage || "1d6").trim() || "1d6",
+      ...sanitizeOnHitFields(row),
       Targets: Math.max(1, safeInt(row.Targets, 1)),
       Cost: clamp(safeInt(row.Cost, 1), 1, 4),
       "Uses/round": clamp(safeInt(row["Uses/round"], 1), 0, 1),
       "Enabled?": Boolean(row["Enabled?"]),
     };
+  }
+
+  function sanitizeOnHitFields(row) {
+    return {
+      "On-hit DC": Math.max(0, safeInt(row["On-hit DC"], 0)),
+      "On-hit Save": normalizeSaveStat(row["On-hit Save"], "CON"),
+      "On-hit Damage": String(row["On-hit Damage"] || "").trim(),
+      "On-hit Success": normalizeOnHitSuccess(row["On-hit Success"]),
+    };
+  }
+
+  // Scales a row's on-hit damage along with its main damage (blank stays blank).
+  function scaleOnHitDamage(row, mult, scaler) {
+    const expr = String(row["On-hit Damage"] || "").trim();
+    return expr ? scaler(expr, mult) : "";
   }
 
   function sanitizePhaseRow(row) {

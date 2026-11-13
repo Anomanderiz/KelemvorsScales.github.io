@@ -58,6 +58,8 @@ Optional: Lair (avg dmg, #targets, cadence), Recharge (e.g., 5-6, avg dmg, #targ
 
 Rider: on-hit effect that grants advantage next round or reduces target AC; duration in rounds.
 
+On-hit save (combo attacks): give an attack an On-hit DC, On-hit Save, On-hit Dmg and On Save (half or none). When the attack hits, the target makes that save for the extra damage, like a poisoned sword. **+ On-hit Save Attack** adds an example row.
+
 Expected Party Healing / Round is a party-wide sustain average. The calculator divides it evenly across active PCs; it raises the boss-pressure budget without changing boss HP or the target encounter duration.
 
 ## ðŸ“ˆ Deterministic DPR
@@ -146,6 +148,8 @@ Crunchy crits: on crit, damage = max dice + one normal roll + modifier once.
 
 Save-for-half: expected damage = 0.5+0.5â‹…ð‘ƒ(fail) times average damage.
 
+On-hit save: expected extra damage = P(hit) x (m + (1-m) x P(fail)) x average on-hit damage, where m = 0.5 for save-for-half and 0 for save-for-nothing. The on-hit damage never crits.
+
 Initiative: if the boss acts first, PCs might lose actions that round if they drop before swinging.
 
 Resistance is applied to incoming boss damage; boss regeneration occurs on the boss turn. Refreshing THP (e.g. `1d6+8` for a cleric's aura) is rolled for each PC every round; it does not stack, and a higher roll replaces leftover THP. Expected healing is entered as a party total and divided evenly across active PCs.
@@ -194,6 +198,7 @@ Re-run until guardrails show âœ“.
 - **Charts:** cumulative party victories and wipes by round, plus the unconditional final outcome mix for both strategies.
 - **Per-use targeting:** every attack independently samples from **all living PCs**, weighted by each PC's Target Wt; each save ability samples its configured number of distinct targets. Minions, lair actions and recharge powers use the same rules.
 - **Crunchy crits:** crit = *max dice + one rolled* (modifier once) for attack rolls; save-based effects donâ€™t crit (RAW).
+- **On-hit saves:** an attack (boss or legendary) can carry a follow-up save, e.g. a poisoned blade: on a hit or crit the target rolls the On-hit Save against the On-hit DC for the On-hit Dmg, halved on a success (*half*) or avoided (*none*). Only the weapon damage crits. Tuning and baking scale the on-hit damage along with the weapon damage.
 
 ---
 
